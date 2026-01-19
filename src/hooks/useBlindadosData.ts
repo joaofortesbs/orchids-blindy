@@ -6,79 +6,45 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
 const SYNC_INTERVAL = 30000;
-const BLINDADOS_CACHE_KEY = 'blindy_data_cache_v2';
-const PAUSED_SESSION_KEY = 'blindy_paused_session_v1';
+const CACHE_SAVE_INTERVAL = 2000;
+const BLINDADOS_CACHE_KEY = 'blindy_data_cache_v5';
 
-interface PausedSessionData {
-  categoryId: string;
-  elapsedSeconds: number;
-  date: string;
-  timestamp: number;
+function safeStorage() {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage; } catch { return null; }
 }
 
 function getCachedData(): BlindadosData | null {
-  if (typeof window === 'undefined') return null;
+  const storage = safeStorage();
+  if (!storage) return null;
   try {
-    const cached = localStorage.getItem(BLINDADOS_CACHE_KEY);
-    if (!cached) return null;
-    const parsed = JSON.parse(cached) as BlindadosData;
-    if (!parsed.pomodoro?.settings?.intervals) {
-      parsed.pomodoro = {
-        ...parsed.pomodoro,
-        settings: {
-          ...parsed.pomodoro?.settings,
-          categories: parsed.pomodoro?.settings?.categories || DEFAULT_POMODORO_SETTINGS.categories,
-          intervals: DEFAULT_POMODORO_SETTINGS.intervals,
-        },
-      };
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+    const cached = storage.getItem(BLINDADOS_CACHE_KEY);
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
 }
 
 function setCachedData(data: BlindadosData) {
-  if (typeof window === 'undefined') return;
+  const storage = safeStorage();
+  if (!storage) return;
   try {
-    localStorage.setItem(BLINDADOS_CACHE_KEY, JSON.stringify(data));
+    storage.setItem(BLINDADOS_CACHE_KEY, JSON.stringify(data));
   } catch {}
 }
 
-function getPausedSession(): PausedSessionData | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const paused = localStorage.getItem(PAUSED_SESSION_KEY);
-    if (!paused) return null;
-    return JSON.parse(paused);
-  } catch {
-    return null;
-  }
-}
-
-function setPausedSession(data: PausedSessionData | null) {
-  if (typeof window === 'undefined') return;
-  try {
-    if (data) {
-      localStorage.setItem(PAUSED_SESSION_KEY, JSON.stringify(data));
-    } else {
-      localStorage.removeItem(PAUSED_SESSION_KEY);
-    }
-  } catch {}
-}
+const DEFAULT_COLUMN_TITLES = ['A FAZER', 'EM PROGRESSO', 'CONCLUÍDO'];
 
 export function useBlindadosData() {
   const [data, setData] = useState<BlindadosData>(DEFAULT_DATA);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
-  const [pausedSession, setPausedSessionState] = useState<PausedSessionData | null>(null);
   const { user } = useAuth();
   const supabase = createClient();
-  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastSyncRef = useRef<string>(new Date().toISOString());
-  const initRef = useRef(false);
+  
   const dataRef = useRef(data);
+  const initRef = useRef(false);
+  const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const cacheTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     dataRef.current = data;
@@ -89,29 +55,47 @@ export function useBlindadosData() {
     const cached = getCachedData();
     if (cached) {
       setData(cached);
-      setIsLoaded(true);
-    }
-    const paused = getPausedSession();
-    if (paused) {
-      setPausedSessionState(paused);
     }
   }, []);
+
+  const createDefaultColumns = useCallback(async () => {
+    if (!user) return [];
+    
+    const columns: KanbanColumn[] = [];
+    
+    for (let i = 0; i < DEFAULT_COLUMN_TITLES.length; i++) {
+      const { data: newCol, error } = await supabase
+        .from('kanban_columns')
+        .insert({
+          user_id: user.id,
+          title: DEFAULT_COLUMN_TITLES[i],
+          position: i,
+        })
+        .select()
+        .single();
+      
+      if (!error && newCol) {
+        columns.push({
+          id: newCol.id,
+          title: newCol.title,
+          cards: [],
+        });
+      }
+    }
+    
+    return columns;
+  }, [user, supabase]);
 
   const loadFromSupabase = useCallback(async () => {
     if (!user) {
       setIsLoaded(true);
       return;
     }
-
+    
     try {
       setIsSyncing(true);
-      const [
-        categoriesRes,
-        sessionsRes,
-        settingsRes,
-        columnsRes,
-        cardsRes,
-      ] = await Promise.all([
+
+      const [catRes, sesRes, setRes, colRes, crdRes] = await Promise.all([
         supabase.from('pomodoro_categories').select('*').eq('user_id', user.id).order('created_at'),
         supabase.from('pomodoro_sessions').select('*').eq('user_id', user.id).order('completed_at', { ascending: false }),
         supabase.from('pomodoro_settings').select('*').eq('user_id', user.id).single(),
@@ -119,14 +103,14 @@ export function useBlindadosData() {
         supabase.from('kanban_cards').select('*').eq('user_id', user.id).order('position'),
       ]);
 
-      const categories: PomodoroCategory[] = (categoriesRes.data || []).map(cat => ({
+      const categories: PomodoroCategory[] = (catRes.data || []).map(cat => ({
         id: cat.id,
         name: cat.name,
         color: cat.color,
         duration: cat.duration_minutes,
       }));
 
-      const sessions: PomodoroSession[] = (sessionsRes.data || []).map(s => ({
+      const sessions: PomodoroSession[] = (sesRes.data || []).map(s => ({
         id: s.id,
         categoryId: s.category_id || '',
         duration: s.duration_minutes,
@@ -137,16 +121,16 @@ export function useBlindadosData() {
       const settings: PomodoroSettings = {
         categories: categories.length > 0 ? categories : DEFAULT_POMODORO_SETTINGS.categories,
         intervals: {
-          shortBreak: settingsRes.data?.short_break_minutes ?? DEFAULT_POMODORO_SETTINGS.intervals.shortBreak,
-          longBreak: settingsRes.data?.long_break_minutes ?? DEFAULT_POMODORO_SETTINGS.intervals.longBreak,
-          cyclesUntilLongBreak: settingsRes.data?.cycles_until_long_break ?? DEFAULT_POMODORO_SETTINGS.intervals.cyclesUntilLongBreak,
+          shortBreak: setRes.data?.short_break_minutes ?? DEFAULT_POMODORO_SETTINGS.intervals.shortBreak,
+          longBreak: setRes.data?.long_break_minutes ?? DEFAULT_POMODORO_SETTINGS.intervals.longBreak,
+          cyclesUntilLongBreak: setRes.data?.cycles_until_long_break ?? DEFAULT_POMODORO_SETTINGS.intervals.cyclesUntilLongBreak,
         },
       };
 
       const cardsMap = new Map<string, KanbanCard[]>();
-      (cardsRes.data || []).forEach(card => {
-        const cards = cardsMap.get(card.column_id) || [];
-        cards.push({
+      (crdRes.data || []).forEach(card => {
+        const list = cardsMap.get(card.column_id) || [];
+        list.push({
           id: card.id,
           title: card.title,
           description: card.description || '',
@@ -156,221 +140,127 @@ export function useBlindadosData() {
           createdAt: card.created_at,
           updatedAt: card.updated_at,
         });
-        cardsMap.set(card.column_id, cards);
+        cardsMap.set(card.column_id, list);
       });
 
-      const columns: KanbanColumn[] = (columnsRes.data || []).map(col => ({
+      let columns: KanbanColumn[] = (colRes.data || []).map(col => ({
         id: col.id,
         title: col.title,
         cards: cardsMap.get(col.id) || [],
       }));
 
+      if (columns.length === 0) {
+        columns = await createDefaultColumns();
+      }
+
       const newData: BlindadosData = {
         pomodoro: { sessions, settings },
-        kanban: { columns: columns.length > 0 ? columns : DEFAULT_DATA.kanban.columns },
+        kanban: { columns },
         lastUpdated: new Date().toISOString(),
       };
 
       setData(newData);
       setCachedData(newData);
-      lastSyncRef.current = new Date().toISOString();
-    } catch (error) {
-      console.error('Error loading data from Supabase:', error);
+    } catch (e) {
+      console.error('Sync error:', e);
     } finally {
       setIsLoaded(true);
       setIsSyncing(false);
     }
-  }, [user, supabase]);
+  }, [user, supabase, createDefaultColumns]);
 
   useEffect(() => {
-    if (!isMounted || initRef.current) return;
-    initRef.current = true;
-    loadFromSupabase();
+    if (isMounted && !initRef.current) {
+      initRef.current = true;
+      loadFromSupabase();
+    }
   }, [isMounted, loadFromSupabase]);
 
   useEffect(() => {
-    if (!user || !isMounted) return;
-
-    syncIntervalRef.current = setInterval(() => {
-      loadFromSupabase();
-    }, SYNC_INTERVAL);
-
-    return () => {
-      if (syncIntervalRef.current) {
-        clearInterval(syncIntervalRef.current);
-      }
-    };
-  }, [user, isMounted, loadFromSupabase]);
-
-  useEffect(() => {
-    if (!user || !isMounted) return;
-
-    const channel = supabase
-      .channel('db-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'pomodoro_sessions', filter: `user_id=eq.${user.id}` },
-        () => loadFromSupabase()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'kanban_cards', filter: `user_id=eq.${user.id}` },
-        () => loadFromSupabase()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'kanban_columns', filter: `user_id=eq.${user.id}` },
-        () => loadFromSupabase()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, supabase, isMounted, loadFromSupabase]);
-
-  const updateData = useCallback((updater: (prev: BlindadosData) => BlindadosData) => {
-    setData(prev => {
-      const newData = updater(prev);
-      setCachedData(newData);
-      return newData;
-    });
-  }, []);
-
-  const updateKanbanColumns = useCallback(async (columns: KanbanColumn[]) => {
-    if (!user) return;
-
-    updateData(prev => ({
-      ...prev,
-      kanban: { columns },
-      lastUpdated: new Date().toISOString(),
-    }));
-
-    try {
-      for (let i = 0; i < columns.length; i++) {
-        await supabase
-          .from('kanban_columns')
-          .update({ position: i, title: columns[i].title })
-          .eq('id', columns[i].id)
-          .eq('user_id', user.id);
-      }
-    } catch (error) {
-      console.error('Error updating kanban columns:', error);
+    if (!isMounted) return;
+    cacheTimerRef.current = setInterval(() => setCachedData(dataRef.current), CACHE_SAVE_INTERVAL);
+    if (user) {
+      syncTimerRef.current = setInterval(loadFromSupabase, SYNC_INTERVAL);
     }
-  }, [user, supabase, updateData]);
+    return () => {
+      if (cacheTimerRef.current) clearInterval(cacheTimerRef.current);
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+    };
+  }, [isMounted, user, loadFromSupabase]);
 
   const addKanbanColumn = useCallback(async (title: string) => {
     if (!user) return;
-
-    const tempId = `temp_col_${Date.now()}`;
-    const newColumn: KanbanColumn = { id: tempId, title: title.toUpperCase(), cards: [] };
     
-    updateData(prev => ({
-      ...prev,
-      kanban: { columns: [...prev.kanban.columns, newColumn] },
-      lastUpdated: new Date().toISOString(),
-    }));
-
+    const position = dataRef.current.kanban.columns.length;
+    
     try {
       const { data: newCol, error } = await supabase
         .from('kanban_columns')
         .insert({
           user_id: user.id,
           title: title.toUpperCase(),
-          position: dataRef.current.kanban.columns.length,
+          position,
         })
         .select()
         .single();
 
-      if (!error && newCol) {
-        updateData(prev => ({
-          ...prev,
-          kanban: {
-            columns: prev.kanban.columns.map(col =>
-              col.id === tempId ? { ...col, id: newCol.id } : col
-            ),
-          },
-          lastUpdated: new Date().toISOString(),
-        }));
-      } else {
-        console.error('Error creating column:', error);
-        updateData(prev => ({
-          ...prev,
-          kanban: { columns: prev.kanban.columns.filter(col => col.id !== tempId) },
-          lastUpdated: new Date().toISOString(),
-        }));
+      if (error) {
+        console.error('Error creating column:', error.message);
+        return;
       }
-    } catch (error) {
-      console.error('Error adding kanban column:', error);
-      updateData(prev => ({
+
+      const column: KanbanColumn = {
+        id: newCol.id,
+        title: newCol.title,
+        cards: [],
+      };
+
+      setData(prev => ({
         ...prev,
-        kanban: { columns: prev.kanban.columns.filter(col => col.id !== tempId) },
+        kanban: { columns: [...prev.kanban.columns, column] },
         lastUpdated: new Date().toISOString(),
       }));
+    } catch (e) {
+      console.error('Error adding column:', e);
     }
-  }, [user, supabase, updateData]);
+  }, [user, supabase]);
 
   const deleteKanbanColumn = useCallback(async (columnId: string) => {
     if (!user) return;
-
-    const columnBackup = dataRef.current.kanban.columns.find(c => c.id === columnId);
     
-    updateData(prev => ({
+    setData(prev => ({
       ...prev,
       kanban: { columns: prev.kanban.columns.filter(c => c.id !== columnId) },
       lastUpdated: new Date().toISOString(),
     }));
 
     try {
-      const { error } = await supabase.from('kanban_columns').delete().eq('id', columnId).eq('user_id', user.id);
-      if (error) {
-        console.error('Error deleting column:', error);
-        if (columnBackup) {
-          updateData(prev => ({
-            ...prev,
-            kanban: { columns: [...prev.kanban.columns, columnBackup] },
-            lastUpdated: new Date().toISOString(),
-          }));
-        }
-      }
-    } catch (error) {
-      console.error('Error deleting kanban column:', error);
+      await supabase.from('kanban_columns').delete().eq('id', columnId).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error deleting column:', e);
     }
-  }, [user, supabase, updateData]);
+  }, [user, supabase]);
 
   const addKanbanCard = useCallback(async (columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>) => {
     if (!user) return;
-
-    const tempId = `temp_card_${Date.now()}`;
-    const tempCard: KanbanCard = {
-      ...card,
-      id: tempId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    updateData(prev => ({
-      ...prev,
-      kanban: {
-        columns: prev.kanban.columns.map(col =>
-          col.id === columnId ? { ...col, cards: [...col.cards, tempCard] } : col
-        ),
-      },
-      lastUpdated: new Date().toISOString(),
-    }));
+    
+    const column = dataRef.current.kanban.columns.find(c => c.id === columnId);
+    if (!column) {
+      console.error('Column not found:', columnId);
+      return;
+    }
+    
+    const position = column.cards.length;
 
     try {
-      const column = dataRef.current.kanban.columns.find(c => c.id === columnId);
-      const position = column?.cards.length || 0;
-
-      const { data: newCardData, error } = await supabase
+      const { data: newCard, error } = await supabase
         .from('kanban_cards')
         .insert({
           user_id: user.id,
           column_id: columnId,
           title: card.title,
           description: card.description || '',
-          priority: card.priority,
+          priority: card.priority || 'media',
           tags: card.tags || [],
           subtasks: card.subtasks || [],
           position,
@@ -378,74 +268,51 @@ export function useBlindadosData() {
         .select()
         .single();
 
-      if (!error && newCardData) {
-        const newCard: KanbanCard = {
-          id: newCardData.id,
-          title: newCardData.title,
-          description: newCardData.description || '',
-          priority: newCardData.priority as 'alta' | 'media' | 'baixa',
-          tags: newCardData.tags || [],
-          subtasks: newCardData.subtasks || [],
-          createdAt: newCardData.created_at,
-          updatedAt: newCardData.updated_at,
-        };
-
-        updateData(prev => ({
-          ...prev,
-          kanban: {
-            columns: prev.kanban.columns.map(col =>
-              col.id === columnId
-                ? { ...col, cards: col.cards.map(c => c.id === tempId ? newCard : c) }
-                : col
-            ),
-          },
-          lastUpdated: new Date().toISOString(),
-        }));
-      } else {
-        console.error('Error creating card:', error);
-        updateData(prev => ({
-          ...prev,
-          kanban: {
-            columns: prev.kanban.columns.map(col =>
-              col.id === columnId
-                ? { ...col, cards: col.cards.filter(c => c.id !== tempId) }
-                : col
-            ),
-          },
-          lastUpdated: new Date().toISOString(),
-        }));
+      if (error) {
+        console.error('Error creating card:', error.message, error.details, error.hint);
+        return;
       }
-    } catch (error) {
-      console.error('Error adding kanban card:', error);
-      updateData(prev => ({
+
+      const kanbanCard: KanbanCard = {
+        id: newCard.id,
+        title: newCard.title,
+        description: newCard.description || '',
+        priority: newCard.priority as 'alta' | 'media' | 'baixa',
+        tags: newCard.tags || [],
+        subtasks: newCard.subtasks || [],
+        createdAt: newCard.created_at,
+        updatedAt: newCard.updated_at,
+      };
+
+      setData(prev => ({
         ...prev,
         kanban: {
-          columns: prev.kanban.columns.map(col =>
-            col.id === columnId
-              ? { ...col, cards: col.cards.filter(c => c.id !== tempId) }
-              : col
+          columns: prev.kanban.columns.map(c =>
+            c.id === columnId ? { ...c, cards: [...c.cards, kanbanCard] } : c
           ),
         },
         lastUpdated: new Date().toISOString(),
       }));
+    } catch (e) {
+      console.error('Error adding card:', e);
     }
-  }, [user, supabase, updateData]);
+  }, [user, supabase]);
 
   const updateKanbanCard = useCallback(async (columnId: string, cardId: string, updates: Partial<KanbanCard>) => {
     if (!user) return;
 
-    updateData(prev => ({
+    setData(prev => ({
       ...prev,
       kanban: {
-        columns: prev.kanban.columns.map(col =>
-          col.id === columnId
+        columns: prev.kanban.columns.map(c =>
+          c.id === columnId
             ? {
-                ...col,
-                cards: col.cards.map(card =>
+                ...c,
+                cards: c.cards.map(card =>
                   card.id === cardId ? { ...card, ...updates, updatedAt: new Date().toISOString() } : card
                 ),
               }
-            : col
+            : c
         ),
       },
       lastUpdated: new Date().toISOString(),
@@ -460,19 +327,19 @@ export function useBlindadosData() {
       if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks;
 
       await supabase.from('kanban_cards').update(dbUpdates).eq('id', cardId).eq('user_id', user.id);
-    } catch (error) {
-      console.error('Error updating kanban card:', error);
+    } catch (e) {
+      console.error('Error updating card:', e);
     }
-  }, [user, supabase, updateData]);
+  }, [user, supabase]);
 
   const deleteKanbanCard = useCallback(async (columnId: string, cardId: string) => {
     if (!user) return;
 
-    updateData(prev => ({
+    setData(prev => ({
       ...prev,
       kanban: {
-        columns: prev.kanban.columns.map(col =>
-          col.id === columnId ? { ...col, cards: col.cards.filter(c => c.id !== cardId) } : col
+        columns: prev.kanban.columns.map(c =>
+          c.id === columnId ? { ...c, cards: c.cards.filter(card => card.id !== cardId) } : c
         ),
       },
       lastUpdated: new Date().toISOString(),
@@ -480,57 +347,62 @@ export function useBlindadosData() {
 
     try {
       await supabase.from('kanban_cards').delete().eq('id', cardId).eq('user_id', user.id);
-    } catch (error) {
-      console.error('Error deleting kanban card:', error);
+    } catch (e) {
+      console.error('Error deleting card:', e);
     }
-  }, [user, supabase, updateData]);
+  }, [user, supabase]);
 
-  const moveCard = useCallback(async (cardId: string, sourceColumnId: string, targetColumnId: string, targetIndex: number) => {
+  const moveCard = useCallback(async (cardId: string, sourceColId: string, targetColId: string, targetIdx: number) => {
     if (!user) return;
-
-    const sourceColumn = dataRef.current.kanban.columns.find(c => c.id === sourceColumnId);
-    const card = sourceColumn?.cards.find(c => c.id === cardId);
+    
+    const card = dataRef.current.kanban.columns.find(c => c.id === sourceColId)?.cards.find(c => c.id === cardId);
     if (!card) return;
 
-    updateData(prev => {
-      const updatedColumns = prev.kanban.columns.map(col => {
-        if (col.id === sourceColumnId) return { ...col, cards: col.cards.filter(c => c.id !== cardId) };
-        if (col.id === targetColumnId) {
-          const newCards = [...col.cards];
-          newCards.splice(targetIndex, 0, card);
-          return { ...col, cards: newCards };
+    setData(prev => {
+      const newCols = prev.kanban.columns.map(c => {
+        if (c.id === sourceColId) return { ...c, cards: c.cards.filter(card => card.id !== cardId) };
+        if (c.id === targetColId) {
+          const list = [...c.cards];
+          list.splice(targetIdx, 0, card);
+          return { ...c, cards: list };
         }
-        return col;
+        return c;
       });
-      return { ...prev, kanban: { columns: updatedColumns }, lastUpdated: new Date().toISOString() };
+      return { ...prev, kanban: { columns: newCols }, lastUpdated: new Date().toISOString() };
     });
 
     try {
-      await supabase.from('kanban_cards').update({ column_id: targetColumnId, position: targetIndex }).eq('id', cardId).eq('user_id', user.id);
-    } catch (error) {
-      console.error('Error moving card:', error);
+      await supabase.from('kanban_cards').update({ column_id: targetColId, position: targetIdx }).eq('id', cardId).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error moving card:', e);
     }
-  }, [user, supabase, updateData]);
+  }, [user, supabase]);
+
+  const updateKanbanColumns = useCallback(async (columns: KanbanColumn[]) => {
+    if (!user) return;
+
+    setData(prev => ({
+      ...prev,
+      kanban: { columns },
+      lastUpdated: new Date().toISOString(),
+    }));
+
+    try {
+      for (let i = 0; i < columns.length; i++) {
+        await supabase.from('kanban_columns').update({ position: i, title: columns[i].title }).eq('id', columns[i].id).eq('user_id', user.id);
+      }
+    } catch (e) {
+      console.error('Error updating columns:', e);
+    }
+  }, [user, supabase]);
 
   const addPomodoroSession = useCallback(async (session: Omit<PomodoroSession, 'id'>) => {
     if (!user) return;
 
-    const tempId = `temp_session_${Date.now()}`;
-    const tempSession: PomodoroSession = { ...session, id: tempId };
-
-    updateData(prev => ({
-      ...prev,
-      pomodoro: { ...prev.pomodoro, sessions: [tempSession, ...prev.pomodoro.sessions] },
-      lastUpdated: new Date().toISOString(),
-    }));
-
-    setPausedSession(null);
-    setPausedSessionState(null);
+    const category = dataRef.current.pomodoro.settings.categories.find(c => c.id === session.categoryId);
 
     try {
-      const category = dataRef.current.pomodoro.settings.categories.find(c => c.id === session.categoryId);
-
-      const { data: newSessionData, error } = await supabase
+      const { data: newSession, error } = await supabase
         .from('pomodoro_sessions')
         .insert({
           user_id: user.id,
@@ -543,107 +415,61 @@ export function useBlindadosData() {
         .select()
         .single();
 
-      if (!error && newSessionData) {
-        const newSession: PomodoroSession = {
-          id: newSessionData.id,
-          categoryId: newSessionData.category_id,
-          duration: newSessionData.duration_minutes,
-          completedAt: newSessionData.completed_at,
-          date: newSessionData.session_date,
-        };
-
-        updateData(prev => ({
-          ...prev,
-          pomodoro: {
-            ...prev.pomodoro,
-            sessions: prev.pomodoro.sessions.map(s => s.id === tempId ? newSession : s),
-          },
-          lastUpdated: new Date().toISOString(),
-        }));
+      if (error) {
+        console.error('Error adding session:', error.message);
+        return;
       }
-    } catch (error) {
-      console.error('Error adding pomodoro session:', error);
+
+      const pomodoroSession: PomodoroSession = {
+        id: newSession.id,
+        categoryId: newSession.category_id,
+        duration: newSession.duration_minutes,
+        completedAt: newSession.completed_at,
+        date: newSession.session_date,
+      };
+
+      setData(prev => ({
+        ...prev,
+        pomodoro: { ...prev.pomodoro, sessions: [pomodoroSession, ...prev.pomodoro.sessions] },
+        lastUpdated: new Date().toISOString(),
+      }));
+    } catch (e) {
+      console.error('Error adding session:', e);
     }
-  }, [user, supabase, updateData]);
-
-  const savePausedSessionData = useCallback((categoryId: string, elapsedSeconds: number, date: string) => {
-    const pausedData: PausedSessionData = {
-      categoryId,
-      elapsedSeconds,
-      date,
-      timestamp: Date.now(),
-    };
-    setPausedSession(pausedData);
-    setPausedSessionState(pausedData);
-  }, []);
-
-  const clearPausedSession = useCallback(() => {
-    setPausedSession(null);
-    setPausedSessionState(null);
-  }, []);
+  }, [user, supabase]);
 
   const updatePomodoroSettings = useCallback(async (settings: PomodoroSettings) => {
     if (!user) return;
 
-    const safeSettings: PomodoroSettings = {
-      categories: settings.categories || DEFAULT_POMODORO_SETTINGS.categories,
-      intervals: {
-        shortBreak: settings.intervals?.shortBreak ?? DEFAULT_POMODORO_SETTINGS.intervals.shortBreak,
-        longBreak: settings.intervals?.longBreak ?? DEFAULT_POMODORO_SETTINGS.intervals.longBreak,
-        cyclesUntilLongBreak: settings.intervals?.cyclesUntilLongBreak ?? DEFAULT_POMODORO_SETTINGS.intervals.cyclesUntilLongBreak,
-      },
-    };
-
-    updateData(prev => ({
+    setData(prev => ({
       ...prev,
-      pomodoro: { ...prev.pomodoro, settings: safeSettings },
+      pomodoro: { ...prev.pomodoro, settings },
       lastUpdated: new Date().toISOString(),
     }));
 
     try {
-      await supabase
-        .from('pomodoro_settings')
-        .update({
-          short_break_minutes: safeSettings.intervals.shortBreak,
-          long_break_minutes: safeSettings.intervals.longBreak,
-          cycles_until_long_break: safeSettings.intervals.cyclesUntilLongBreak,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', user.id);
+      await supabase.from('pomodoro_settings').upsert({
+        user_id: user.id,
+        short_break_minutes: settings.intervals.shortBreak,
+        long_break_minutes: settings.intervals.longBreak,
+        cycles_until_long_break: settings.intervals.cyclesUntilLongBreak,
+        updated_at: new Date().toISOString(),
+      });
 
-      const existingCategoryIds = dataRef.current.pomodoro.settings.categories.map(c => c.id);
-
-      for (const cat of safeSettings.categories) {
-        if (existingCategoryIds.includes(cat.id)) {
-          await supabase
-            .from('pomodoro_categories')
-            .update({ name: cat.name, color: cat.color, duration_minutes: cat.duration || 25 })
-            .eq('id', cat.id)
-            .eq('user_id', user.id);
-        } else {
-          const { data: newCat } = await supabase
-            .from('pomodoro_categories')
-            .insert({ user_id: user.id, name: cat.name, color: cat.color, duration_minutes: cat.duration || 25 })
-            .select()
-            .single();
-          if (newCat) cat.id = newCat.id;
-        }
+      for (const cat of settings.categories) {
+        if (cat.id.startsWith('temp_') || !cat.id.includes('-')) continue;
+        await supabase.from('pomodoro_categories').upsert({
+          id: cat.id,
+          user_id: user.id,
+          name: cat.name,
+          color: cat.color,
+          duration_minutes: cat.duration || 25,
+        });
       }
-
-      const newCategoryIds = safeSettings.categories.map(c => c.id);
-      const deletedCategoryIds = existingCategoryIds.filter(id => !newCategoryIds.includes(id));
-
-      for (const id of deletedCategoryIds) {
-        await supabase.from('pomodoro_categories').delete().eq('id', id).eq('user_id', user.id);
-      }
-    } catch (error) {
-      console.error('Error updating pomodoro settings:', error);
+    } catch (e) {
+      console.error('Error updating settings:', e);
     }
-  }, [user, supabase, updateData]);
-
-  const forceSync = useCallback(async () => {
-    await loadFromSupabase();
-  }, [loadFromSupabase]);
+  }, [user, supabase]);
 
   const safeData: BlindadosData = {
     ...data,
@@ -660,7 +486,7 @@ export function useBlindadosData() {
       sessions: data.pomodoro?.sessions || [],
     },
     kanban: {
-      columns: data.kanban?.columns || DEFAULT_DATA.kanban.columns,
+      columns: data.kanban?.columns || [],
     },
   };
 
@@ -668,8 +494,6 @@ export function useBlindadosData() {
     data: safeData,
     isLoaded,
     isSyncing,
-    lastSync: lastSyncRef.current,
-    pausedSession,
     updateKanbanColumns,
     addKanbanColumn,
     deleteKanbanColumn,
@@ -679,8 +503,6 @@ export function useBlindadosData() {
     moveCard,
     addPomodoroSession,
     updatePomodoroSettings,
-    savePausedSessionData,
-    clearPausedSession,
-    forceSync,
+    forceSync: loadFromSupabase,
   };
 }

@@ -5,125 +5,36 @@ import {
   VisoesData, 
   DEFAULT_VISOES_DATA, 
   VisionBoard, 
-  MainGoal, 
-  GoalAction, 
-  Goal, 
-  Book, 
-  Reminder, 
-  Note, 
-  FutureLetter,
-  BankAccount,
-  Transaction,
-  FinancePeriod,
-  GoalCategory
+  GoalAction,
+  Note,
 } from '@/lib/types/visoes';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
-const VISOES_CACHE_KEY = 'blindy_visoes_cache_v2';
-const VISOES_BACKUP_KEY = 'blindy_visoes_backup_v2';
-const VISOES_PENDING_OPS_KEY = 'blindy_visoes_pending_ops_v1';
-const CACHE_SAVE_INTERVAL = 1000;
+const VISOES_CACHE_KEY = 'blindy_visoes_cache_v5';
+const CACHE_SAVE_INTERVAL = 2000;
 const SUPABASE_SYNC_INTERVAL = 30000;
-
-interface CacheData {
-  data: VisoesData;
-  timestamp: number;
-  userId: string;
-}
-
-interface PendingOperation {
-  id: string;
-  type: 'insert' | 'update' | 'delete';
-  table: string;
-  payload: Record<string, unknown>;
-  timestamp: number;
-}
 
 function safeStorage() {
   if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
+  try { return window.localStorage; } catch { return null; }
 }
 
-function loadCache(userId: string): VisoesData | null {
+function getCachedData(): VisoesData | null {
   const storage = safeStorage();
   if (!storage) return null;
-  
   try {
     const cached = storage.getItem(VISOES_CACHE_KEY);
-    if (!cached) return null;
-    
-    const parsed: CacheData = JSON.parse(cached);
-    if (parsed.userId !== userId) return null;
-    
-    return parsed.data;
-  } catch (e) {
-    console.warn('Failed to load visoes cache:', e);
-    return null;
-  }
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
 }
 
-function saveCache(data: VisoesData, userId: string): void {
+function setCachedData(data: VisoesData) {
   const storage = safeStorage();
   if (!storage) return;
-  
   try {
-    const currentCache = storage.getItem(VISOES_CACHE_KEY);
-    if (currentCache) {
-      storage.setItem(VISOES_BACKUP_KEY, currentCache);
-    }
-    
-    const cacheData: CacheData = {
-      data,
-      timestamp: Date.now(),
-      userId,
-    };
-    storage.setItem(VISOES_CACHE_KEY, JSON.stringify(cacheData));
-  } catch (e) {
-    console.warn('Failed to save visoes cache:', e);
-  }
-}
-
-function loadPendingOps(): PendingOperation[] {
-  const storage = safeStorage();
-  if (!storage) return [];
-  
-  try {
-    const ops = storage.getItem(VISOES_PENDING_OPS_KEY);
-    return ops ? JSON.parse(ops) : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePendingOps(ops: PendingOperation[]): void {
-  const storage = safeStorage();
-  if (!storage) return;
-  
-  try {
-    storage.setItem(VISOES_PENDING_OPS_KEY, JSON.stringify(ops));
-  } catch (e) {
-    console.warn('Failed to save pending ops:', e);
-  }
-}
-
-function addPendingOp(op: Omit<PendingOperation, 'id' | 'timestamp'>): void {
-  const ops = loadPendingOps();
-  ops.push({
-    ...op,
-    id: `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    timestamp: Date.now(),
-  });
-  savePendingOps(ops);
-}
-
-function removePendingOp(opId: string): void {
-  const ops = loadPendingOps().filter(op => op.id !== opId);
-  savePendingOps(ops);
+    storage.setItem(VISOES_CACHE_KEY, JSON.stringify(data));
+  } catch {}
 }
 
 export function useVisoesData() {
@@ -134,10 +45,10 @@ export function useVisoesData() {
   const { user } = useAuth();
   const supabase = createClient();
   
-  const cacheIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const dataRef = useRef(data);
   const initRef = useRef(false);
+  const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const cacheTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     dataRef.current = data;
@@ -145,68 +56,23 @@ export function useVisoesData() {
 
   useEffect(() => {
     setIsMounted(true);
-  }, []);
-
-  const updateLocalData = useCallback((updater: (prev: VisoesData) => VisoesData) => {
-    setData(prev => {
-      const newData = updater(prev);
-      dataRef.current = newData;
-      return newData;
-    });
-  }, []);
-
-  const processPendingOperations = useCallback(async () => {
-    if (!user) return;
-    
-    const ops = loadPendingOps();
-    if (ops.length === 0) return;
-    
-    for (const op of ops) {
-      try {
-        switch (op.type) {
-          case 'insert':
-            await supabase.from(op.table).insert(op.payload);
-            break;
-          case 'update':
-            const { id: updateId, ...updatePayload } = op.payload;
-            await supabase.from(op.table).update(updatePayload).eq('id', updateId).eq('user_id', user.id);
-            break;
-          case 'delete':
-            await supabase.from(op.table).delete().eq('id', op.payload.id).eq('user_id', user.id);
-            break;
-        }
-        removePendingOp(op.id);
-      } catch (e) {
-        console.warn(`Failed to process pending op ${op.id}:`, e);
-      }
+    const cached = getCachedData();
+    if (cached) {
+      setData(cached);
+      setIsLoaded(true);
     }
-  }, [user, supabase]);
+  }, []);
 
   const loadFromSupabase = useCallback(async () => {
     if (!user) {
       setIsLoaded(true);
       return;
     }
-
+    
     try {
       setIsSyncing(true);
-      
-      await processPendingOperations();
 
-      const [
-        visionBoardRes,
-        mainGoalRes,
-        goalActionsRes,
-        goalCategoriesRes,
-        goalsRes,
-        booksRes,
-        remindersRes,
-        notesRes,
-        futureLettersRes,
-        bankAccountsRes,
-        transactionsRes,
-        userSettingsRes,
-      ] = await Promise.all([
+      const results = await Promise.allSettled([
         supabase.from('vision_boards').select('*').eq('user_id', user.id).order('position'),
         supabase.from('main_goals').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1),
         supabase.from('goal_actions').select('*').eq('user_id', user.id).order('position'),
@@ -221,790 +87,382 @@ export function useVisoesData() {
         supabase.from('user_settings').select('*').eq('user_id', user.id).single(),
       ]);
 
-      const visionBoard: VisionBoard[] = (visionBoardRes.data || []).map(v => ({
-        id: v.id,
-        imageUrl: v.image_url,
-        createdAt: v.created_at,
-      }));
+      const getValue = <T,>(result: PromiseSettledResult<{ data: T | null; error: unknown }>, defaultValue: T): T => {
+        if (result.status === 'fulfilled' && result.value.data) {
+          return result.value.data;
+        }
+        return defaultValue;
+      };
 
-      const mainGoalData = mainGoalRes.data?.[0];
-      const mainGoal: MainGoal | null = mainGoalData ? {
-        id: mainGoalData.id,
-        text: mainGoalData.text,
-        year: mainGoalData.year,
-        createdAt: mainGoalData.created_at,
-      } : null;
+      const vbData = getValue(results[0], []) as Array<{ id: string; image_url: string; created_at: string }>;
+      const mgData = getValue(results[1], []) as Array<{ id: string; text: string; year: number; created_at: string }>;
+      const gaData = getValue(results[2], []) as Array<{ id: string; text: string; completed: boolean }>;
+      const gcData = getValue(results[3], []) as Array<{ id: string; name: string; icon: string }>;
+      const gData = getValue(results[4], []) as Array<{ id: string; text: string; completed: boolean; category_id: string }>;
+      const bData = getValue(results[5], []) as Array<{ id: string; title: string; author: string; cover_url: string; progress: number; type: string }>;
+      const rData = getValue(results[6], []) as Array<{ id: string; text: string; due_date: string | null; completed: boolean; created_at: string }>;
+      const nData = getValue(results[7], []) as Array<{ id: string; title: string; content: string; color: string; created_at: string; updated_at: string }>;
+      const flData = getValue(results[8], []) as Array<{ id: string; title: string; content: string; open_date: string; is_opened: boolean; created_at: string }>;
+      const baData = getValue(results[9], []) as Array<{ id: string; name: string; type: string; balance: number }>;
+      const tData = getValue(results[10], []) as Array<{ id: string; bank_account_id: string; title: string; type: string; amount: number; date: string; status: string }>;
+      
+      let usData: { finance_start_date?: string; finance_end_date?: string; selected_year?: number } | null = null;
+      if (results[11].status === 'fulfilled' && results[11].value.data) {
+        usData = results[11].value.data as { finance_start_date?: string; finance_end_date?: string; selected_year?: number };
+      }
 
-      const goalActions: GoalAction[] = (goalActionsRes.data || []).map(a => ({
-        id: a.id,
-        text: a.text,
-        completed: a.completed,
-      }));
-
-      const goalsMap = new Map<string, Goal[]>();
-      (goalsRes.data || []).forEach(g => {
-        const goals = goalsMap.get(g.category_id) || [];
-        goals.push({
-          id: g.id,
-          text: g.text,
-          completed: g.completed,
-          categoryId: g.category_id,
-        });
-        goalsMap.set(g.category_id, goals);
+      const goalsMap = new Map();
+      gData.forEach(item => {
+        const list = goalsMap.get(item.category_id) || [];
+        list.push({ id: item.id, text: item.text, completed: item.completed, categoryId: item.category_id });
+        goalsMap.set(item.category_id, list);
       });
 
-      const goalCategories: GoalCategory[] = (goalCategoriesRes.data || []).map(c => ({
-        id: c.id,
-        name: c.name,
-        icon: c.icon,
-        goals: goalsMap.get(c.id) || [],
-      }));
-
-      const books: Book[] = (booksRes.data || []).map(b => ({
-        id: b.id,
-        title: b.title,
-        author: b.author,
-        coverUrl: b.cover_url || '',
-        progress: b.progress,
-        type: b.type as 'book' | 'podcast' | 'video' | 'course',
-      }));
-
-      const reminders: Reminder[] = (remindersRes.data || []).map(r => ({
-        id: r.id,
-        text: r.text,
-        dueDate: r.due_date,
-        completed: r.completed,
-        createdAt: r.created_at,
-      }));
-
-      const notes: Note[] = (notesRes.data || []).map(n => ({
-        id: n.id,
-        title: n.title,
-        content: n.content || '',
-        color: n.color,
-        createdAt: n.created_at,
-        updatedAt: n.updated_at,
-      }));
-
-      const futureLetters: FutureLetter[] = (futureLettersRes.data || []).map(l => ({
-        id: l.id,
-        title: l.title,
-        content: l.content,
-        openDate: l.open_date,
-        isOpened: l.is_opened,
-        createdAt: l.created_at,
-      }));
-
-      const bankAccounts: BankAccount[] = (bankAccountsRes.data || []).map(a => ({
-        id: a.id,
-        name: a.name,
-        type: a.type as 'fiduciary' | 'crypto',
-        accountType: a.account_type,
-        personType: a.person_type,
-        balance: Number(a.balance) || 0,
-        notes: a.notes || '',
-      }));
-
-      const transactions: Transaction[] = (transactionsRes.data || []).map(t => ({
-        id: t.id,
-        bankAccountId: t.bank_account_id,
-        title: t.title,
-        type: t.type as 'income' | 'expense',
-        category: t.category,
-        amount: Number(t.amount),
-        date: t.date,
-        paymentMethod: t.payment_method as Transaction['paymentMethod'],
-        status: t.status as 'pending' | 'confirmed',
-        notes: t.notes || '',
-      }));
-
-      const settings = userSettingsRes.data;
-      const financePeriod: FinancePeriod = settings?.finance_start_date && settings?.finance_end_date ? {
-        startDate: settings.finance_start_date,
-        endDate: settings.finance_end_date,
-      } : DEFAULT_VISOES_DATA.financePeriod;
-
       const newData: VisoesData = {
-        visionBoard,
-        mainGoal,
-        goalActions,
-        goalCategories: goalCategories.length > 0 ? goalCategories : DEFAULT_VISOES_DATA.goalCategories,
-        books,
-        reminders,
-        notes,
-        futureLetters,
-        bankAccounts,
-        transactions,
-        financePeriod,
-        selectedYear: settings?.selected_year || new Date().getFullYear(),
+        visionBoard: vbData.map(v => ({ id: v.id, imageUrl: v.image_url, createdAt: v.created_at })),
+        mainGoal: mgData[0] ? { id: mgData[0].id, text: mgData[0].text, year: mgData[0].year, createdAt: mgData[0].created_at } : null,
+        goalActions: gaData.map(a => ({ id: a.id, text: a.text, completed: a.completed })),
+        goalCategories: gcData.map(c => ({ id: c.id, name: c.name, icon: c.icon, goals: goalsMap.get(c.id) || [] })),
+        books: bData.map(item => ({ id: item.id, title: item.title, author: item.author, coverUrl: item.cover_url || '', progress: item.progress, type: item.type })),
+        reminders: rData.map(item => ({ id: item.id, text: item.text, dueDate: item.due_date, completed: item.completed, createdAt: item.created_at })),
+        notes: nData.map(item => ({ id: item.id, title: item.title, content: item.content || '', color: item.color, createdAt: item.created_at, updatedAt: item.updated_at })),
+        futureLetters: flData.map(item => ({ id: item.id, title: item.title, content: item.content, openDate: item.open_date, isOpened: item.is_opened, createdAt: item.created_at })),
+        bankAccounts: baData.map(item => ({ id: item.id, name: item.name, type: item.type, balance: Number(item.balance) || 0 })),
+        transactions: tData.map(item => ({ id: item.id, bankAccountId: item.bank_account_id, title: item.title, type: item.type, amount: Number(item.amount), date: item.date, status: item.status })),
+        financePeriod: usData?.finance_start_date ? { startDate: usData.finance_start_date, endDate: usData.finance_end_date || '' } : DEFAULT_VISOES_DATA.financePeriod,
+        selectedYear: usData?.selected_year || new Date().getFullYear(),
       };
 
       setData(newData);
-      dataRef.current = newData;
-      saveCache(newData, user.id);
-    } catch (error) {
-      console.error('Error loading Visoes data from Supabase:', error);
+      setCachedData(newData);
+    } catch (e) {
+      console.error('Sync error:', e);
     } finally {
       setIsLoaded(true);
       setIsSyncing(false);
     }
-  }, [user, supabase, processPendingOperations]);
+  }, [user, supabase]);
 
   useEffect(() => {
-    if (!isMounted || initRef.current) return;
-    initRef.current = true;
-    
-    if (user) {
-      const cached = loadCache(user.id);
-      if (cached) {
-        setData(cached);
-        dataRef.current = cached;
-        setIsLoaded(true);
-      }
+    if (isMounted && !initRef.current) {
+      initRef.current = true;
+      loadFromSupabase();
     }
-    
-    loadFromSupabase();
+  }, [isMounted, loadFromSupabase]);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    cacheTimerRef.current = setInterval(() => setCachedData(dataRef.current), CACHE_SAVE_INTERVAL);
+    if (user) {
+      syncTimerRef.current = setInterval(loadFromSupabase, SUPABASE_SYNC_INTERVAL);
+    }
+    return () => {
+      if (cacheTimerRef.current) clearInterval(cacheTimerRef.current);
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+    };
   }, [isMounted, user, loadFromSupabase]);
 
-  useEffect(() => {
-    if (!user || !isMounted) return;
-    
-    cacheIntervalRef.current = setInterval(() => {
-      saveCache(dataRef.current, user.id);
-    }, CACHE_SAVE_INTERVAL);
-    
-    return () => {
-      if (cacheIntervalRef.current) {
-        clearInterval(cacheIntervalRef.current);
-      }
-    };
-  }, [user, isMounted]);
+  const uploadImageToStorage = useCallback(async (imageData: string): Promise<string> => {
+    if (!user) return imageData;
+    if (!imageData.startsWith('data:')) return imageData;
 
-  useEffect(() => {
-    if (!user || !isMounted) return;
-    
-    syncIntervalRef.current = setInterval(() => {
-      loadFromSupabase();
-    }, SUPABASE_SYNC_INTERVAL);
-    
-    return () => {
-      if (syncIntervalRef.current) {
-        clearInterval(syncIntervalRef.current);
-      }
-    };
-  }, [user, isMounted, loadFromSupabase]);
-
-  useEffect(() => {
-    if (!user || !isMounted) return;
-    
-    const handleBeforeUnload = () => {
-      saveCache(dataRef.current, user.id);
-    };
-    
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        saveCache(dataRef.current, user.id);
-      }
-    };
-    
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [user, isMounted]);
-
-  const uploadImageToStorage = useCallback(async (base64Data: string): Promise<string | null> => {
-    if (!user) return null;
-    
     try {
-      const base64Match = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
-      if (!base64Match) {
-        return base64Data;
-      }
-      
-      const imageType = base64Match[1];
-      const base64Content = base64Match[2];
-      
-      const byteCharacters = atob(base64Content);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: `image/${imageType}` });
-      
-      const fileName = `${user.id}/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${imageType}`;
+      const response = await fetch(imageData);
+      const blob = await response.blob();
+      const ext = blob.type.split('/')[1] || 'png';
+      const fileName = `${user.id}/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`;
       
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('vision-board')
-        .upload(fileName, blob, {
-          contentType: `image/${imageType}`,
-          upsert: false,
-        });
-      
+        .upload(fileName, blob, { contentType: blob.type, upsert: false });
+
       if (uploadError) {
-        console.error('Error uploading image:', uploadError);
-        return base64Data;
+        console.error('Upload error:', uploadError);
+        return imageData;
       }
-      
-      const { data: publicUrl } = supabase.storage
+
+      const { data: publicUrlData } = supabase.storage
         .from('vision-board')
         .getPublicUrl(uploadData.path);
-      
-      return publicUrl.publicUrl;
+
+      return publicUrlData.publicUrl;
     } catch (e) {
-      console.error('Error processing image upload:', e);
-      return base64Data;
+      console.error('Error uploading image:', e);
+      return imageData;
     }
   }, [user, supabase]);
 
   const addVisionImage = useCallback(async (imageUrl: string) => {
     if (!user) return;
 
-    const tempId = `temp_${Date.now()}`;
-    const newImage: VisionBoard = {
-      id: tempId,
-      imageUrl,
-      createdAt: new Date().toISOString(),
-    };
-
-    updateLocalData(prev => ({
-      ...prev,
-      visionBoard: [...prev.visionBoard, newImage],
-    }));
-
     try {
-      const finalImageUrl = await uploadImageToStorage(imageUrl);
+      const finalUrl = await uploadImageToStorage(imageUrl);
       
-      const { data: newImageData, error } = await supabase
+      const { data: newImage, error } = await supabase
         .from('vision_boards')
         .insert({
           user_id: user.id,
-          image_url: finalImageUrl || imageUrl,
-          position: data.visionBoard.length,
+          image_url: finalUrl,
+          position: dataRef.current.visionBoard.length,
         })
         .select()
         .single();
 
-      if (!error && newImageData) {
-        updateLocalData(prev => ({
-          ...prev,
-          visionBoard: prev.visionBoard.map(v => 
-            v.id === tempId ? { ...v, id: newImageData.id, imageUrl: finalImageUrl || imageUrl } : v
-          ),
-        }));
-      } else {
-        console.error('Error saving vision board image:', error);
-        addPendingOp({
-          type: 'insert',
-          table: 'vision_boards',
-          payload: { user_id: user.id, image_url: finalImageUrl || imageUrl, position: data.visionBoard.length },
-        });
+      if (error) {
+        console.error('Error saving vision board image:', error.message);
+        return;
       }
+
+      const visionImage: VisionBoard = {
+        id: newImage.id,
+        imageUrl: newImage.image_url,
+        createdAt: newImage.created_at,
+      };
+
+      setData(prev => ({
+        ...prev,
+        visionBoard: [...prev.visionBoard, visionImage],
+      }));
     } catch (e) {
       console.error('Error adding vision image:', e);
     }
-  }, [user, supabase, data.visionBoard.length, updateLocalData, uploadImageToStorage]);
+  }, [user, supabase, uploadImageToStorage]);
 
   const removeVisionImage = useCallback(async (id: string) => {
     if (!user) return;
 
-    updateLocalData(prev => ({
+    setData(prev => ({
       ...prev,
       visionBoard: prev.visionBoard.filter(v => v.id !== id),
     }));
 
-    const { error } = await supabase.from('vision_boards').delete().eq('id', id).eq('user_id', user.id);
-    
-    if (error) {
-      addPendingOp({ type: 'delete', table: 'vision_boards', payload: { id } });
+    try {
+      await supabase.from('vision_boards').delete().eq('id', id).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error removing vision image:', e);
     }
-  }, [user, supabase, updateLocalData]);
-
-  const resetVisionBoard = useCallback(async () => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, visionBoard: [] }));
-    await supabase.from('vision_boards').delete().eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
+  }, [user, supabase]);
 
   const setMainGoal = useCallback(async (text: string, year: number) => {
     if (!user) return;
 
-    const tempId = `temp_${Date.now()}`;
-    const newGoal: MainGoal = { id: tempId, text, year, createdAt: new Date().toISOString() };
+    try {
+      const { data: existingGoal } = await supabase
+        .from('main_goals')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('year', year)
+        .single();
 
-    updateLocalData(prev => ({ ...prev, mainGoal: newGoal }));
+      let newGoal;
+      if (existingGoal) {
+        const { data, error } = await supabase
+          .from('main_goals')
+          .update({ text, updated_at: new Date().toISOString() })
+          .eq('id', existingGoal.id)
+          .select()
+          .single();
+        if (error) throw error;
+        newGoal = data;
+      } else {
+        const { data, error } = await supabase
+          .from('main_goals')
+          .insert({ user_id: user.id, text, year })
+          .select()
+          .single();
+        if (error) throw error;
+        newGoal = data;
+      }
 
-    await supabase.from('main_goals').delete().eq('user_id', user.id);
-
-    const { data: newGoalData, error } = await supabase
-      .from('main_goals')
-      .insert({ user_id: user.id, text, year })
-      .select()
-      .single();
-
-    if (!error && newGoalData) {
-      updateLocalData(prev => ({
+      setData(prev => ({
         ...prev,
-        mainGoal: prev.mainGoal ? { ...prev.mainGoal, id: newGoalData.id } : null,
+        mainGoal: { id: newGoal.id, text: newGoal.text, year: newGoal.year, createdAt: newGoal.created_at },
       }));
+    } catch (e) {
+      console.error('Error setting main goal:', e);
     }
-  }, [user, supabase, updateLocalData]);
+  }, [user, supabase]);
 
   const addGoalAction = useCallback(async (text: string) => {
     if (!user) return;
 
-    const tempId = `temp_${Date.now()}`;
-    const newAction: GoalAction = { id: tempId, text, completed: false };
+    try {
+      const { data: newAction, error } = await supabase
+        .from('goal_actions')
+        .insert({
+          user_id: user.id,
+          text,
+          completed: false,
+          position: dataRef.current.goalActions.length,
+        })
+        .select()
+        .single();
 
-    updateLocalData(prev => ({
-      ...prev,
-      goalActions: [...prev.goalActions, newAction],
-    }));
+      if (error) {
+        console.error('Error adding goal action:', error.message);
+        return;
+      }
 
-    const { data: newActionData, error } = await supabase
-      .from('goal_actions')
-      .insert({
-        user_id: user.id,
-        text,
-        completed: false,
-        position: data.goalActions.length,
-      })
-      .select()
-      .single();
+      const goalAction: GoalAction = {
+        id: newAction.id,
+        text: newAction.text,
+        completed: newAction.completed,
+      };
 
-    if (!error && newActionData) {
-      updateLocalData(prev => ({
+      setData(prev => ({
         ...prev,
-        goalActions: prev.goalActions.map(a => 
-          a.id === tempId ? { ...a, id: newActionData.id } : a
-        ),
+        goalActions: [...prev.goalActions, goalAction],
       }));
+    } catch (e) {
+      console.error('Error adding goal action:', e);
     }
-  }, [user, supabase, data.goalActions.length, updateLocalData]);
+  }, [user, supabase]);
 
   const toggleGoalAction = useCallback(async (id: string) => {
     if (!user) return;
 
-    const action = data.goalActions.find(a => a.id === id);
+    const action = dataRef.current.goalActions.find(a => a.id === id);
     if (!action) return;
 
-    updateLocalData(prev => ({
+    const newCompleted = !action.completed;
+
+    setData(prev => ({
       ...prev,
-      goalActions: prev.goalActions.map(a =>
-        a.id === id ? { ...a, completed: !a.completed } : a
+      goalActions: prev.goalActions.map(a => 
+        a.id === id ? { ...a, completed: newCompleted } : a
       ),
     }));
 
-    await supabase.from('goal_actions').update({ completed: !action.completed }).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, data.goalActions, updateLocalData]);
-
-  const removeGoalAction = useCallback(async (id: string) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({
-      ...prev,
-      goalActions: prev.goalActions.filter(a => a.id !== id),
-    }));
-
-    await supabase.from('goal_actions').delete().eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const addGoalToCategory = useCallback(async (categoryId: string, text: string) => {
-    if (!user) return;
-
-    const tempId = `temp_${Date.now()}`;
-    const newGoal: Goal = { id: tempId, text, completed: false, categoryId };
-
-    updateLocalData(prev => ({
-      ...prev,
-      goalCategories: prev.goalCategories.map(cat =>
-        cat.id === categoryId ? { ...cat, goals: [...cat.goals, newGoal] } : cat
-      ),
-    }));
-
-    const category = data.goalCategories.find(c => c.id === categoryId);
-    const position = category?.goals.length || 0;
-
-    const { data: newGoalData, error } = await supabase
-      .from('goals')
-      .insert({
-        user_id: user.id,
-        category_id: categoryId,
-        text,
-        completed: false,
-        position,
-      })
-      .select()
-      .single();
-
-    if (!error && newGoalData) {
-      updateLocalData(prev => ({
-        ...prev,
-        goalCategories: prev.goalCategories.map(cat =>
-          cat.id === categoryId
-            ? { ...cat, goals: cat.goals.map(g => g.id === tempId ? { ...g, id: newGoalData.id } : g) }
-            : cat
-        ),
-      }));
+    try {
+      await supabase.from('goal_actions').update({ completed: newCompleted }).eq('id', id).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error toggling goal action:', e);
     }
-  }, [user, supabase, data.goalCategories, updateLocalData]);
-
-  const toggleGoalInCategory = useCallback(async (categoryId: string, goalId: string) => {
-    if (!user) return;
-
-    const category = data.goalCategories.find(c => c.id === categoryId);
-    const goal = category?.goals.find(g => g.id === goalId);
-    if (!goal) return;
-
-    updateLocalData(prev => ({
-      ...prev,
-      goalCategories: prev.goalCategories.map(cat =>
-        cat.id === categoryId
-          ? { ...cat, goals: cat.goals.map(g => g.id === goalId ? { ...g, completed: !g.completed } : g) }
-          : cat
-      ),
-    }));
-
-    await supabase.from('goals').update({ completed: !goal.completed }).eq('id', goalId).eq('user_id', user.id);
-  }, [user, supabase, data.goalCategories, updateLocalData]);
-
-  const removeGoalFromCategory = useCallback(async (categoryId: string, goalId: string) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({
-      ...prev,
-      goalCategories: prev.goalCategories.map(cat =>
-        cat.id === categoryId ? { ...cat, goals: cat.goals.filter(g => g.id !== goalId) } : cat
-      ),
-    }));
-
-    await supabase.from('goals').delete().eq('id', goalId).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const addBook = useCallback(async (book: Omit<Book, 'id'>) => {
-    if (!user) return;
-
-    const tempId = `temp_${Date.now()}`;
-    const newBook: Book = { ...book, id: tempId };
-
-    updateLocalData(prev => ({ ...prev, books: [newBook, ...prev.books] }));
-
-    const { data: newBookData, error } = await supabase
-      .from('books')
-      .insert({
-        user_id: user.id,
-        title: book.title,
-        author: book.author,
-        cover_url: book.coverUrl,
-        progress: book.progress,
-        type: book.type,
-      })
-      .select()
-      .single();
-
-    if (!error && newBookData) {
-      updateLocalData(prev => ({
-        ...prev,
-        books: prev.books.map(b => b.id === tempId ? { ...b, id: newBookData.id } : b),
-      }));
-    }
-  }, [user, supabase, updateLocalData]);
-
-  const updateBookProgress = useCallback(async (id: string, progress: number) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({
-      ...prev,
-      books: prev.books.map(b => b.id === id ? { ...b, progress } : b),
-    }));
-
-    await supabase.from('books').update({ progress }).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const removeBook = useCallback(async (id: string) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, books: prev.books.filter(b => b.id !== id) }));
-    await supabase.from('books').delete().eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
+  }, [user, supabase]);
 
   const addReminder = useCallback(async (text: string, dueDate: string | null) => {
     if (!user) return;
 
-    const tempId = `temp_${Date.now()}`;
-    const newReminder: Reminder = {
-      id: tempId,
-      text,
-      dueDate,
-      completed: false,
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      const { data: newReminder, error } = await supabase
+        .from('reminders')
+        .insert({
+          user_id: user.id,
+          text,
+          due_date: dueDate,
+          completed: false,
+        })
+        .select()
+        .single();
 
-    updateLocalData(prev => ({ ...prev, reminders: [newReminder, ...prev.reminders] }));
+      if (error) {
+        console.error('Error adding reminder:', error.message);
+        return;
+      }
 
-    const { data: newReminderData, error } = await supabase
-      .from('reminders')
-      .insert({ user_id: user.id, text, due_date: dueDate, completed: false })
-      .select()
-      .single();
-
-    if (!error && newReminderData) {
-      updateLocalData(prev => ({
+      setData(prev => ({
         ...prev,
-        reminders: prev.reminders.map(r => r.id === tempId ? { ...r, id: newReminderData.id } : r),
+        reminders: [
+          { id: newReminder.id, text: newReminder.text, dueDate: newReminder.due_date, completed: newReminder.completed, createdAt: newReminder.created_at },
+          ...prev.reminders
+        ],
       }));
+    } catch (e) {
+      console.error('Error adding reminder:', e);
     }
-  }, [user, supabase, updateLocalData]);
+  }, [user, supabase]);
 
   const toggleReminder = useCallback(async (id: string) => {
     if (!user) return;
 
-    const reminder = data.reminders.find(r => r.id === id);
+    const reminder = dataRef.current.reminders.find(r => r.id === id);
     if (!reminder) return;
 
-    updateLocalData(prev => ({
+    const newCompleted = !reminder.completed;
+
+    setData(prev => ({
       ...prev,
-      reminders: prev.reminders.map(r => r.id === id ? { ...r, completed: !r.completed } : r),
+      reminders: prev.reminders.map(r => 
+        r.id === id ? { ...r, completed: newCompleted } : r
+      ),
     }));
 
-    await supabase.from('reminders').update({ completed: !reminder.completed }).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, data.reminders, updateLocalData]);
-
-  const removeReminder = useCallback(async (id: string) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, reminders: prev.reminders.filter(r => r.id !== id) }));
-    await supabase.from('reminders').delete().eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const addNote = useCallback(async (title: string, content: string, color: string = '#ef4444') => {
-    if (!user) return;
-
-    const tempId = `temp_${Date.now()}`;
-    const now = new Date().toISOString();
-    const newNote: Note = { id: tempId, title, content, color, createdAt: now, updatedAt: now };
-
-    updateLocalData(prev => ({ ...prev, notes: [newNote, ...prev.notes] }));
-
-    const { data: newNoteData, error } = await supabase
-      .from('notes')
-      .insert({ user_id: user.id, title, content, color })
-      .select()
-      .single();
-
-    if (!error && newNoteData) {
-      updateLocalData(prev => ({
-        ...prev,
-        notes: prev.notes.map(n => n.id === tempId ? { ...n, id: newNoteData.id } : n),
-      }));
+    try {
+      await supabase.from('reminders').update({ completed: newCompleted }).eq('id', id).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error toggling reminder:', e);
     }
-  }, [user, supabase, updateLocalData]);
+  }, [user, supabase]);
+
+  const addNote = useCallback(async (title: string, content: string, color: string) => {
+    if (!user) return;
+
+    try {
+      const { data: newNote, error } = await supabase
+        .from('notes')
+        .insert({ user_id: user.id, title, content, color })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error adding note:', error.message);
+        return;
+      }
+
+      const note: Note = {
+        id: newNote.id,
+        title: newNote.title,
+        content: newNote.content || '',
+        color: newNote.color,
+        createdAt: newNote.created_at,
+        updatedAt: newNote.updated_at,
+      };
+
+      setData(prev => ({
+        ...prev,
+        notes: [note, ...prev.notes],
+      }));
+    } catch (e) {
+      console.error('Error adding note:', e);
+    }
+  }, [user, supabase]);
 
   const updateNote = useCallback(async (id: string, updates: Partial<Note>) => {
     if (!user) return;
 
-    updateLocalData(prev => ({
+    setData(prev => ({
       ...prev,
-      notes: prev.notes.map(n => n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n),
+      notes: prev.notes.map(n => 
+        n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n
+      ),
     }));
 
-    const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (updates.title !== undefined) dbUpdates.title = updates.title;
-    if (updates.content !== undefined) dbUpdates.content = updates.content;
-    if (updates.color !== undefined) dbUpdates.color = updates.color;
+    try {
+      const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (updates.title !== undefined) dbUpdates.title = updates.title;
+      if (updates.content !== undefined) dbUpdates.content = updates.content;
+      if (updates.color !== undefined) dbUpdates.color = updates.color;
 
-    await supabase.from('notes').update(dbUpdates).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
+      await supabase.from('notes').update(dbUpdates).eq('id', id).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error updating note:', e);
+    }
+  }, [user, supabase]);
 
   const removeNote = useCallback(async (id: string) => {
     if (!user) return;
 
-    updateLocalData(prev => ({ ...prev, notes: prev.notes.filter(n => n.id !== id) }));
-    await supabase.from('notes').delete().eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
+    setData(prev => ({
+      ...prev,
+      notes: prev.notes.filter(n => n.id !== id),
+    }));
 
-  const addBankAccount = useCallback(async (account: Omit<BankAccount, 'id'>) => {
-    if (!user) return;
-
-    const tempId = `temp_${Date.now()}`;
-    const newAccount: BankAccount = { ...account, id: tempId };
-
-    updateLocalData(prev => ({ ...prev, bankAccounts: [...prev.bankAccounts, newAccount] }));
-
-    const { data: newAccountData, error } = await supabase
-      .from('bank_accounts')
-      .insert({
-        user_id: user.id,
-        name: account.name,
-        type: account.type,
-        account_type: account.accountType,
-        person_type: account.personType,
-        balance: account.balance,
-        notes: account.notes,
-      })
-      .select()
-      .single();
-
-    if (!error && newAccountData) {
-      updateLocalData(prev => ({
-        ...prev,
-        bankAccounts: prev.bankAccounts.map(a => a.id === tempId ? { ...a, id: newAccountData.id } : a),
-      }));
+    try {
+      await supabase.from('notes').delete().eq('id', id).eq('user_id', user.id);
+    } catch (e) {
+      console.error('Error removing note:', e);
     }
-  }, [user, supabase, updateLocalData]);
-
-  const updateBankAccount = useCallback(async (id: string, updates: Partial<BankAccount>) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({
-      ...prev,
-      bankAccounts: prev.bankAccounts.map(a => a.id === id ? { ...a, ...updates } : a),
-    }));
-
-    const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (updates.name !== undefined) dbUpdates.name = updates.name;
-    if (updates.type !== undefined) dbUpdates.type = updates.type;
-    if (updates.accountType !== undefined) dbUpdates.account_type = updates.accountType;
-    if (updates.personType !== undefined) dbUpdates.person_type = updates.personType;
-    if (updates.balance !== undefined) dbUpdates.balance = updates.balance;
-    if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
-
-    await supabase.from('bank_accounts').update(dbUpdates).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const removeBankAccount = useCallback(async (id: string) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, bankAccounts: prev.bankAccounts.filter(a => a.id !== id) }));
-    await supabase.from('bank_accounts').delete().eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'>) => {
-    if (!user) return;
-
-    const tempId = `temp_${Date.now()}`;
-    const newTransaction: Transaction = { ...transaction, id: tempId };
-
-    updateLocalData(prev => ({ ...prev, transactions: [newTransaction, ...prev.transactions] }));
-
-    const { data: newTransData, error } = await supabase
-      .from('transactions')
-      .insert({
-        user_id: user.id,
-        bank_account_id: transaction.bankAccountId,
-        title: transaction.title,
-        type: transaction.type,
-        category: transaction.category,
-        amount: transaction.amount,
-        date: transaction.date,
-        payment_method: transaction.paymentMethod,
-        status: transaction.status,
-        notes: transaction.notes,
-      })
-      .select()
-      .single();
-
-    if (!error && newTransData) {
-      updateLocalData(prev => ({
-        ...prev,
-        transactions: prev.transactions.map(t => t.id === tempId ? { ...t, id: newTransData.id } : t),
-      }));
-    }
-  }, [user, supabase, updateLocalData]);
-
-  const updateTransaction = useCallback(async (id: string, updates: Partial<Transaction>) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({
-      ...prev,
-      transactions: prev.transactions.map(t => t.id === id ? { ...t, ...updates } : t),
-    }));
-
-    const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (updates.bankAccountId !== undefined) dbUpdates.bank_account_id = updates.bankAccountId;
-    if (updates.title !== undefined) dbUpdates.title = updates.title;
-    if (updates.type !== undefined) dbUpdates.type = updates.type;
-    if (updates.category !== undefined) dbUpdates.category = updates.category;
-    if (updates.amount !== undefined) dbUpdates.amount = updates.amount;
-    if (updates.date !== undefined) dbUpdates.date = updates.date;
-    if (updates.paymentMethod !== undefined) dbUpdates.payment_method = updates.paymentMethod;
-    if (updates.status !== undefined) dbUpdates.status = updates.status;
-    if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
-
-    await supabase.from('transactions').update(dbUpdates).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const removeTransaction = useCallback(async (id: string) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== id) }));
-    await supabase.from('transactions').delete().eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const toggleTransactionStatus = useCallback(async (id: string) => {
-    if (!user) return;
-
-    const transaction = data.transactions.find(t => t.id === id);
-    if (!transaction) return;
-
-    const newStatus = transaction.status === 'pending' ? 'confirmed' : 'pending';
-
-    updateLocalData(prev => ({
-      ...prev,
-      transactions: prev.transactions.map(t => t.id === id ? { ...t, status: newStatus } : t),
-    }));
-
-    await supabase.from('transactions').update({ status: newStatus }).eq('id', id).eq('user_id', user.id);
-  }, [user, supabase, data.transactions, updateLocalData]);
-
-  const setFinancePeriod = useCallback(async (period: FinancePeriod) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, financePeriod: period }));
-
-    await supabase.from('user_settings').update({
-      finance_start_date: period.startDate,
-      finance_end_date: period.endDate,
-    }).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const setSelectedYear = useCallback(async (year: number) => {
-    if (!user) return;
-
-    updateLocalData(prev => ({ ...prev, selectedYear: year }));
-    await supabase.from('user_settings').update({ selected_year: year }).eq('user_id', user.id);
-  }, [user, supabase, updateLocalData]);
-
-  const getFinanceSummary = useCallback((startDate: string, endDate: string) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    const filteredTransactions = data.transactions.filter(t => {
-      const date = new Date(t.date);
-      return date >= start && date <= end;
-    });
-
-    const pendingIncome = filteredTransactions.filter(t => t.type === 'income' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0);
-    const pendingExpense = filteredTransactions.filter(t => t.type === 'expense' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0);
-    const confirmedIncome = filteredTransactions.filter(t => t.type === 'income' && t.status === 'confirmed').reduce((sum, t) => sum + t.amount, 0);
-    const confirmedExpense = filteredTransactions.filter(t => t.type === 'expense' && t.status === 'confirmed').reduce((sum, t) => sum + t.amount, 0);
-
-    return {
-      pendingIncome,
-      pendingExpense,
-      pendingBalance: pendingIncome - pendingExpense,
-      confirmedIncome,
-      confirmedExpense,
-      confirmedBalance: confirmedIncome - confirmedExpense,
-      totalBalance: (pendingIncome - pendingExpense) + (confirmedIncome - confirmedExpense),
-      filteredTransactions,
-    };
-  }, [data.transactions]);
+  }, [user, supabase]);
 
   return {
     data,
@@ -1012,33 +470,14 @@ export function useVisoesData() {
     isSyncing,
     addVisionImage,
     removeVisionImage,
-    resetVisionBoard,
     setMainGoal,
     addGoalAction,
     toggleGoalAction,
-    removeGoalAction,
-    addGoalToCategory,
-    toggleGoalInCategory,
-    removeGoalFromCategory,
-    addBook,
-    updateBookProgress,
-    removeBook,
     addReminder,
     toggleReminder,
-    removeReminder,
     addNote,
     updateNote,
     removeNote,
-    addBankAccount,
-    updateBankAccount,
-    removeBankAccount,
-    addTransaction,
-    updateTransaction,
-    removeTransaction,
-    toggleTransactionStatus,
-    setFinancePeriod,
-    setSelectedYear,
-    getFinanceSummary,
     forceSync: loadFromSupabase,
   };
 }
