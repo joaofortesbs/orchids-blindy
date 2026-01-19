@@ -38,17 +38,24 @@ function setCachedData(data: BlindadosData) {
 }
 
 export function useBlindadosData() {
-  const [data, setData] = useState<BlindadosData>(() => {
-    const cached = getCachedData();
-    return cached || DEFAULT_DATA;
-  });
-  const [isLoaded, setIsLoaded] = useState(() => !!getCachedData());
+  const [data, setData] = useState<BlindadosData>(DEFAULT_DATA);
+  const [isLoaded, setIsLoaded] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
   const { user } = useAuth();
   const supabase = createClient();
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSyncRef = useRef<string>(new Date().toISOString());
   const initRef = useRef(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+    const cached = getCachedData();
+    if (cached) {
+      setData(cached);
+      setIsLoaded(true);
+    }
+  }, []);
 
   const loadFromSupabase = useCallback(async () => {
     if (!user) {
@@ -136,13 +143,13 @@ export function useBlindadosData() {
   }, [user, supabase]);
 
   useEffect(() => {
-    if (initRef.current) return;
+    if (!isMounted || initRef.current) return;
     initRef.current = true;
     loadFromSupabase();
-  }, [loadFromSupabase]);
+  }, [isMounted, loadFromSupabase]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isMounted) return;
 
     syncIntervalRef.current = setInterval(() => {
       loadFromSupabase();
@@ -153,10 +160,10 @@ export function useBlindadosData() {
         clearInterval(syncIntervalRef.current);
       }
     };
-  }, [user, loadFromSupabase]);
+  }, [user, isMounted, loadFromSupabase]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isMounted) return;
 
     const channel = supabase
       .channel('db-changes')
@@ -175,7 +182,7 @@ export function useBlindadosData() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, supabase, loadFromSupabase]);
+  }, [user, supabase, isMounted, loadFromSupabase]);
 
   const updateData = useCallback((updater: (prev: BlindadosData) => BlindadosData) => {
     setData(prev => {

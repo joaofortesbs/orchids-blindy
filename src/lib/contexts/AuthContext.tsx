@@ -56,9 +56,10 @@ function clearCachedAuth() {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => getCachedAuth()?.user || null);
-  const [session, setSession] = useState<Session | null>(() => getCachedAuth()?.session || null);
-  const [isLoading, setIsLoading] = useState(() => !getCachedAuth()?.user);
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isMounted, setIsMounted] = useState(false);
   const supabase = createClient();
   const initRef = useRef(false);
 
@@ -132,7 +133,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (initRef.current) return;
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isMounted || initRef.current) return;
     initRef.current = true;
 
     const cached = getCachedAuth();
@@ -185,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [isMounted, supabase]);
 
   const signUp = async (email: string, password: string, fullName: string, nickname: string) => {
     const { data, error } = await supabase.auth.signUp({
