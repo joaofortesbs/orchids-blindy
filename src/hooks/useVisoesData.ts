@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   VisoesData, 
   DEFAULT_VISOES_DATA, 
@@ -20,11 +20,167 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
+const VISOES_CACHE_KEY = 'blindy_visoes_cache_v2';
+const VISOES_BACKUP_KEY = 'blindy_visoes_backup_v2';
+const VISOES_PENDING_OPS_KEY = 'blindy_visoes_pending_ops_v1';
+const CACHE_SAVE_INTERVAL = 1000;
+const SUPABASE_SYNC_INTERVAL = 30000;
+
+interface CacheData {
+  data: VisoesData;
+  timestamp: number;
+  userId: string;
+}
+
+interface PendingOperation {
+  id: string;
+  type: 'insert' | 'update' | 'delete';
+  table: string;
+  payload: Record<string, unknown>;
+  timestamp: number;
+}
+
+function safeStorage() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function loadCache(userId: string): VisoesData | null {
+  const storage = safeStorage();
+  if (!storage) return null;
+  
+  try {
+    const cached = storage.getItem(VISOES_CACHE_KEY);
+    if (!cached) return null;
+    
+    const parsed: CacheData = JSON.parse(cached);
+    if (parsed.userId !== userId) return null;
+    
+    return parsed.data;
+  } catch (e) {
+    console.warn('Failed to load visoes cache:', e);
+    return null;
+  }
+}
+
+function saveCache(data: VisoesData, userId: string): void {
+  const storage = safeStorage();
+  if (!storage) return;
+  
+  try {
+    const currentCache = storage.getItem(VISOES_CACHE_KEY);
+    if (currentCache) {
+      storage.setItem(VISOES_BACKUP_KEY, currentCache);
+    }
+    
+    const cacheData: CacheData = {
+      data,
+      timestamp: Date.now(),
+      userId,
+    };
+    storage.setItem(VISOES_CACHE_KEY, JSON.stringify(cacheData));
+  } catch (e) {
+    console.warn('Failed to save visoes cache:', e);
+  }
+}
+
+function loadPendingOps(): PendingOperation[] {
+  const storage = safeStorage();
+  if (!storage) return [];
+  
+  try {
+    const ops = storage.getItem(VISOES_PENDING_OPS_KEY);
+    return ops ? JSON.parse(ops) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingOps(ops: PendingOperation[]): void {
+  const storage = safeStorage();
+  if (!storage) return;
+  
+  try {
+    storage.setItem(VISOES_PENDING_OPS_KEY, JSON.stringify(ops));
+  } catch (e) {
+    console.warn('Failed to save pending ops:', e);
+  }
+}
+
+function addPendingOp(op: Omit<PendingOperation, 'id' | 'timestamp'>): void {
+  const ops = loadPendingOps();
+  ops.push({
+    ...op,
+    id: `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    timestamp: Date.now(),
+  });
+  savePendingOps(ops);
+}
+
+function removePendingOp(opId: string): void {
+  const ops = loadPendingOps().filter(op => op.id !== opId);
+  savePendingOps(ops);
+}
+
 export function useVisoesData() {
   const [data, setData] = useState<VisoesData>(DEFAULT_VISOES_DATA);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
   const { user } = useAuth();
   const supabase = createClient();
+  
+  const cacheIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const dataRef = useRef(data);
+  const initRef = useRef(false);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const updateLocalData = useCallback((updater: (prev: VisoesData) => VisoesData) => {
+    setData(prev => {
+      const newData = updater(prev);
+      dataRef.current = newData;
+      return newData;
+    });
+  }, []);
+
+  const processPendingOperations = useCallback(async () => {
+    if (!user) return;
+    
+    const ops = loadPendingOps();
+    if (ops.length === 0) return;
+    
+    for (const op of ops) {
+      try {
+        switch (op.type) {
+          case 'insert':
+            await supabase.from(op.table).insert(op.payload);
+            break;
+          case 'update':
+            const { id: updateId, ...updatePayload } = op.payload;
+            await supabase.from(op.table).update(updatePayload).eq('id', updateId).eq('user_id', user.id);
+            break;
+          case 'delete':
+            await supabase.from(op.table).delete().eq('id', op.payload.id).eq('user_id', user.id);
+            break;
+        }
+        removePendingOp(op.id);
+      } catch (e) {
+        console.warn(`Failed to process pending op ${op.id}:`, e);
+      }
+    }
+  }, [user, supabase]);
 
   const loadFromSupabase = useCallback(async () => {
     if (!user) {
@@ -33,6 +189,10 @@ export function useVisoesData() {
     }
 
     try {
+      setIsSyncing(true);
+      
+      await processPendingOperations();
+
       const [
         visionBoardRes,
         mainGoalRes,
@@ -159,12 +319,12 @@ export function useVisoesData() {
       }));
 
       const settings = userSettingsRes.data;
-      const financePeriod: FinancePeriod | null = settings?.finance_start_date && settings?.finance_end_date ? {
+      const financePeriod: FinancePeriod = settings?.finance_start_date && settings?.finance_end_date ? {
         startDate: settings.finance_start_date,
         endDate: settings.finance_end_date,
-      } : null;
+      } : DEFAULT_VISOES_DATA.financePeriod;
 
-      setData({
+      const newData: VisoesData = {
         visionBoard,
         mainGoal,
         goalActions,
@@ -177,97 +337,236 @@ export function useVisoesData() {
         transactions,
         financePeriod,
         selectedYear: settings?.selected_year || new Date().getFullYear(),
-      });
+      };
+
+      setData(newData);
+      dataRef.current = newData;
+      saveCache(newData, user.id);
     } catch (error) {
       console.error('Error loading Visoes data from Supabase:', error);
     } finally {
       setIsLoaded(true);
+      setIsSyncing(false);
     }
-  }, [user, supabase]);
+  }, [user, supabase, processPendingOperations]);
 
   useEffect(() => {
+    if (!isMounted || initRef.current) return;
+    initRef.current = true;
+    
+    if (user) {
+      const cached = loadCache(user.id);
+      if (cached) {
+        setData(cached);
+        dataRef.current = cached;
+        setIsLoaded(true);
+      }
+    }
+    
     loadFromSupabase();
-  }, [loadFromSupabase]);
+  }, [isMounted, user, loadFromSupabase]);
+
+  useEffect(() => {
+    if (!user || !isMounted) return;
+    
+    cacheIntervalRef.current = setInterval(() => {
+      saveCache(dataRef.current, user.id);
+    }, CACHE_SAVE_INTERVAL);
+    
+    return () => {
+      if (cacheIntervalRef.current) {
+        clearInterval(cacheIntervalRef.current);
+      }
+    };
+  }, [user, isMounted]);
+
+  useEffect(() => {
+    if (!user || !isMounted) return;
+    
+    syncIntervalRef.current = setInterval(() => {
+      loadFromSupabase();
+    }, SUPABASE_SYNC_INTERVAL);
+    
+    return () => {
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+      }
+    };
+  }, [user, isMounted, loadFromSupabase]);
+
+  useEffect(() => {
+    if (!user || !isMounted) return;
+    
+    const handleBeforeUnload = () => {
+      saveCache(dataRef.current, user.id);
+    };
+    
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveCache(dataRef.current, user.id);
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user, isMounted]);
+
+  const uploadImageToStorage = useCallback(async (base64Data: string): Promise<string | null> => {
+    if (!user) return null;
+    
+    try {
+      const base64Match = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (!base64Match) {
+        return base64Data;
+      }
+      
+      const imageType = base64Match[1];
+      const base64Content = base64Match[2];
+      
+      const byteCharacters = atob(base64Content);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: `image/${imageType}` });
+      
+      const fileName = `${user.id}/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${imageType}`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('vision-board')
+        .upload(fileName, blob, {
+          contentType: `image/${imageType}`,
+          upsert: false,
+        });
+      
+      if (uploadError) {
+        console.error('Error uploading image:', uploadError);
+        return base64Data;
+      }
+      
+      const { data: publicUrl } = supabase.storage
+        .from('vision-board')
+        .getPublicUrl(uploadData.path);
+      
+      return publicUrl.publicUrl;
+    } catch (e) {
+      console.error('Error processing image upload:', e);
+      return base64Data;
+    }
+  }, [user, supabase]);
 
   const addVisionImage = useCallback(async (imageUrl: string) => {
     if (!user) return;
 
-    const { data: newImage, error } = await supabase
-      .from('vision_boards')
-      .insert({
-        user_id: user.id,
-        image_url: imageUrl,
-        position: data.visionBoard.length,
-      })
-      .select()
-      .single();
+    const tempId = `temp_${Date.now()}`;
+    const newImage: VisionBoard = {
+      id: tempId,
+      imageUrl,
+      createdAt: new Date().toISOString(),
+    };
 
-    if (!error && newImage) {
-      setData(prev => ({
-        ...prev,
-        visionBoard: [...prev.visionBoard, {
-          id: newImage.id,
-          imageUrl: newImage.image_url,
-          createdAt: newImage.created_at,
-        }],
-      }));
+    updateLocalData(prev => ({
+      ...prev,
+      visionBoard: [...prev.visionBoard, newImage],
+    }));
+
+    try {
+      const finalImageUrl = await uploadImageToStorage(imageUrl);
+      
+      const { data: newImageData, error } = await supabase
+        .from('vision_boards')
+        .insert({
+          user_id: user.id,
+          image_url: finalImageUrl || imageUrl,
+          position: data.visionBoard.length,
+        })
+        .select()
+        .single();
+
+      if (!error && newImageData) {
+        updateLocalData(prev => ({
+          ...prev,
+          visionBoard: prev.visionBoard.map(v => 
+            v.id === tempId ? { ...v, id: newImageData.id, imageUrl: finalImageUrl || imageUrl } : v
+          ),
+        }));
+      } else {
+        console.error('Error saving vision board image:', error);
+        addPendingOp({
+          type: 'insert',
+          table: 'vision_boards',
+          payload: { user_id: user.id, image_url: finalImageUrl || imageUrl, position: data.visionBoard.length },
+        });
+      }
+    } catch (e) {
+      console.error('Error adding vision image:', e);
     }
-  }, [user, supabase, data.visionBoard.length]);
+  }, [user, supabase, data.visionBoard.length, updateLocalData, uploadImageToStorage]);
 
   const removeVisionImage = useCallback(async (id: string) => {
     if (!user) return;
 
-    await supabase.from('vision_boards').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
       visionBoard: prev.visionBoard.filter(v => v.id !== id),
     }));
-  }, [user, supabase]);
+
+    const { error } = await supabase.from('vision_boards').delete().eq('id', id).eq('user_id', user.id);
+    
+    if (error) {
+      addPendingOp({ type: 'delete', table: 'vision_boards', payload: { id } });
+    }
+  }, [user, supabase, updateLocalData]);
 
   const resetVisionBoard = useCallback(async () => {
     if (!user) return;
 
+    updateLocalData(prev => ({ ...prev, visionBoard: [] }));
     await supabase.from('vision_boards').delete().eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      visionBoard: [],
-    }));
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const setMainGoal = useCallback(async (text: string, year: number) => {
     if (!user) return;
 
+    const tempId = `temp_${Date.now()}`;
+    const newGoal: MainGoal = { id: tempId, text, year, createdAt: new Date().toISOString() };
+
+    updateLocalData(prev => ({ ...prev, mainGoal: newGoal }));
+
     await supabase.from('main_goals').delete().eq('user_id', user.id);
 
-    const { data: newGoal, error } = await supabase
+    const { data: newGoalData, error } = await supabase
       .from('main_goals')
-      .insert({
-        user_id: user.id,
-        text,
-        year,
-      })
+      .insert({ user_id: user.id, text, year })
       .select()
       .single();
 
-    if (!error && newGoal) {
-      setData(prev => ({
+    if (!error && newGoalData) {
+      updateLocalData(prev => ({
         ...prev,
-        mainGoal: {
-          id: newGoal.id,
-          text: newGoal.text,
-          year: newGoal.year,
-          createdAt: newGoal.created_at,
-        },
+        mainGoal: prev.mainGoal ? { ...prev.mainGoal, id: newGoalData.id } : null,
       }));
     }
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const addGoalAction = useCallback(async (text: string) => {
     if (!user) return;
 
-    const { data: newAction, error } = await supabase
+    const tempId = `temp_${Date.now()}`;
+    const newAction: GoalAction = { id: tempId, text, completed: false };
+
+    updateLocalData(prev => ({
+      ...prev,
+      goalActions: [...prev.goalActions, newAction],
+    }));
+
+    const { data: newActionData, error } = await supabase
       .from('goal_actions')
       .insert({
         user_id: user.id,
@@ -278,17 +577,15 @@ export function useVisoesData() {
       .select()
       .single();
 
-    if (!error && newAction) {
-      setData(prev => ({
+    if (!error && newActionData) {
+      updateLocalData(prev => ({
         ...prev,
-        goalActions: [...prev.goalActions, {
-          id: newAction.id,
-          text: newAction.text,
-          completed: newAction.completed,
-        }],
+        goalActions: prev.goalActions.map(a => 
+          a.id === tempId ? { ...a, id: newActionData.id } : a
+        ),
       }));
     }
-  }, [user, supabase, data.goalActions.length]);
+  }, [user, supabase, data.goalActions.length, updateLocalData]);
 
   const toggleGoalAction = useCallback(async (id: string) => {
     if (!user) return;
@@ -296,38 +593,44 @@ export function useVisoesData() {
     const action = data.goalActions.find(a => a.id === id);
     if (!action) return;
 
-    await supabase
-      .from('goal_actions')
-      .update({ completed: !action.completed })
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
       goalActions: prev.goalActions.map(a =>
         a.id === id ? { ...a, completed: !a.completed } : a
       ),
     }));
-  }, [user, supabase, data.goalActions]);
+
+    await supabase.from('goal_actions').update({ completed: !action.completed }).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, data.goalActions, updateLocalData]);
 
   const removeGoalAction = useCallback(async (id: string) => {
     if (!user) return;
 
-    await supabase.from('goal_actions').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
       goalActions: prev.goalActions.filter(a => a.id !== id),
     }));
-  }, [user, supabase]);
+
+    await supabase.from('goal_actions').delete().eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const addGoalToCategory = useCallback(async (categoryId: string, text: string) => {
     if (!user) return;
 
+    const tempId = `temp_${Date.now()}`;
+    const newGoal: Goal = { id: tempId, text, completed: false, categoryId };
+
+    updateLocalData(prev => ({
+      ...prev,
+      goalCategories: prev.goalCategories.map(cat =>
+        cat.id === categoryId ? { ...cat, goals: [...cat.goals, newGoal] } : cat
+      ),
+    }));
+
     const category = data.goalCategories.find(c => c.id === categoryId);
     const position = category?.goals.length || 0;
 
-    const { data: newGoal, error } = await supabase
+    const { data: newGoalData, error } = await supabase
       .from('goals')
       .insert({
         user_id: user.id,
@@ -339,22 +642,17 @@ export function useVisoesData() {
       .select()
       .single();
 
-    if (!error && newGoal) {
-      setData(prev => ({
+    if (!error && newGoalData) {
+      updateLocalData(prev => ({
         ...prev,
         goalCategories: prev.goalCategories.map(cat =>
           cat.id === categoryId
-            ? { ...cat, goals: [...cat.goals, {
-                id: newGoal.id,
-                text: newGoal.text,
-                completed: newGoal.completed,
-                categoryId: newGoal.category_id,
-              }] }
+            ? { ...cat, goals: cat.goals.map(g => g.id === tempId ? { ...g, id: newGoalData.id } : g) }
             : cat
         ),
       }));
     }
-  }, [user, supabase, data.goalCategories]);
+  }, [user, supabase, data.goalCategories, updateLocalData]);
 
   const toggleGoalInCategory = useCallback(async (categoryId: string, goalId: string) => {
     if (!user) return;
@@ -363,46 +661,40 @@ export function useVisoesData() {
     const goal = category?.goals.find(g => g.id === goalId);
     if (!goal) return;
 
-    await supabase
-      .from('goals')
-      .update({ completed: !goal.completed })
-      .eq('id', goalId)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
       goalCategories: prev.goalCategories.map(cat =>
         cat.id === categoryId
-          ? {
-              ...cat,
-              goals: cat.goals.map(g =>
-                g.id === goalId ? { ...g, completed: !g.completed } : g
-              ),
-            }
+          ? { ...cat, goals: cat.goals.map(g => g.id === goalId ? { ...g, completed: !g.completed } : g) }
           : cat
       ),
     }));
-  }, [user, supabase, data.goalCategories]);
+
+    await supabase.from('goals').update({ completed: !goal.completed }).eq('id', goalId).eq('user_id', user.id);
+  }, [user, supabase, data.goalCategories, updateLocalData]);
 
   const removeGoalFromCategory = useCallback(async (categoryId: string, goalId: string) => {
     if (!user) return;
 
-    await supabase.from('goals').delete().eq('id', goalId).eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
       goalCategories: prev.goalCategories.map(cat =>
-        cat.id === categoryId
-          ? { ...cat, goals: cat.goals.filter(g => g.id !== goalId) }
-          : cat
+        cat.id === categoryId ? { ...cat, goals: cat.goals.filter(g => g.id !== goalId) } : cat
       ),
     }));
-  }, [user, supabase]);
+
+    await supabase.from('goals').delete().eq('id', goalId).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const addBook = useCallback(async (book: Omit<Book, 'id'>) => {
     if (!user) return;
 
-    const { data: newBook, error } = await supabase
+    const tempId = `temp_${Date.now()}`;
+    const newBook: Book = { ...book, id: tempId };
+
+    updateLocalData(prev => ({ ...prev, books: [newBook, ...prev.books] }));
+
+    const { data: newBookData, error } = await supabase
       .from('books')
       .insert({
         user_id: user.id,
@@ -415,76 +707,59 @@ export function useVisoesData() {
       .select()
       .single();
 
-    if (!error && newBook) {
-      setData(prev => ({
+    if (!error && newBookData) {
+      updateLocalData(prev => ({
         ...prev,
-        books: [{
-          id: newBook.id,
-          title: newBook.title,
-          author: newBook.author,
-          coverUrl: newBook.cover_url || '',
-          progress: newBook.progress,
-          type: newBook.type as 'book' | 'podcast' | 'video' | 'course',
-        }, ...prev.books],
+        books: prev.books.map(b => b.id === tempId ? { ...b, id: newBookData.id } : b),
       }));
     }
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const updateBookProgress = useCallback(async (id: string, progress: number) => {
     if (!user) return;
 
-    await supabase
-      .from('books')
-      .update({ progress, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
-      books: prev.books.map(b =>
-        b.id === id ? { ...b, progress } : b
-      ),
+      books: prev.books.map(b => b.id === id ? { ...b, progress } : b),
     }));
-  }, [user, supabase]);
+
+    await supabase.from('books').update({ progress }).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const removeBook = useCallback(async (id: string) => {
     if (!user) return;
 
+    updateLocalData(prev => ({ ...prev, books: prev.books.filter(b => b.id !== id) }));
     await supabase.from('books').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      books: prev.books.filter(b => b.id !== id),
-    }));
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const addReminder = useCallback(async (text: string, dueDate: string | null) => {
     if (!user) return;
 
-    const { data: newReminder, error } = await supabase
+    const tempId = `temp_${Date.now()}`;
+    const newReminder: Reminder = {
+      id: tempId,
+      text,
+      dueDate,
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    updateLocalData(prev => ({ ...prev, reminders: [newReminder, ...prev.reminders] }));
+
+    const { data: newReminderData, error } = await supabase
       .from('reminders')
-      .insert({
-        user_id: user.id,
-        text,
-        due_date: dueDate,
-        completed: false,
-      })
+      .insert({ user_id: user.id, text, due_date: dueDate, completed: false })
       .select()
       .single();
 
-    if (!error && newReminder) {
-      setData(prev => ({
+    if (!error && newReminderData) {
+      updateLocalData(prev => ({
         ...prev,
-        reminders: [{
-          id: newReminder.id,
-          text: newReminder.text,
-          dueDate: newReminder.due_date,
-          completed: newReminder.completed,
-          createdAt: newReminder.created_at,
-        }, ...prev.reminders],
+        reminders: prev.reminders.map(r => r.id === tempId ? { ...r, id: newReminderData.id } : r),
       }));
     }
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const toggleReminder = useCallback(async (id: string) => {
     if (!user) return;
@@ -492,155 +767,76 @@ export function useVisoesData() {
     const reminder = data.reminders.find(r => r.id === id);
     if (!reminder) return;
 
-    await supabase
-      .from('reminders')
-      .update({ completed: !reminder.completed })
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
-      reminders: prev.reminders.map(r =>
-        r.id === id ? { ...r, completed: !r.completed } : r
-      ),
+      reminders: prev.reminders.map(r => r.id === id ? { ...r, completed: !r.completed } : r),
     }));
-  }, [user, supabase, data.reminders]);
+
+    await supabase.from('reminders').update({ completed: !reminder.completed }).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, data.reminders, updateLocalData]);
 
   const removeReminder = useCallback(async (id: string) => {
     if (!user) return;
 
+    updateLocalData(prev => ({ ...prev, reminders: prev.reminders.filter(r => r.id !== id) }));
     await supabase.from('reminders').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      reminders: prev.reminders.filter(r => r.id !== id),
-    }));
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const addNote = useCallback(async (title: string, content: string, color: string = '#ef4444') => {
     if (!user) return;
 
-    const { data: newNote, error } = await supabase
+    const tempId = `temp_${Date.now()}`;
+    const now = new Date().toISOString();
+    const newNote: Note = { id: tempId, title, content, color, createdAt: now, updatedAt: now };
+
+    updateLocalData(prev => ({ ...prev, notes: [newNote, ...prev.notes] }));
+
+    const { data: newNoteData, error } = await supabase
       .from('notes')
-      .insert({
-        user_id: user.id,
-        title,
-        content,
-        color,
-      })
+      .insert({ user_id: user.id, title, content, color })
       .select()
       .single();
 
-    if (!error && newNote) {
-      setData(prev => ({
+    if (!error && newNoteData) {
+      updateLocalData(prev => ({
         ...prev,
-        notes: [{
-          id: newNote.id,
-          title: newNote.title,
-          content: newNote.content || '',
-          color: newNote.color,
-          createdAt: newNote.created_at,
-          updatedAt: newNote.updated_at,
-        }, ...prev.notes],
+        notes: prev.notes.map(n => n.id === tempId ? { ...n, id: newNoteData.id } : n),
       }));
     }
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const updateNote = useCallback(async (id: string, updates: Partial<Note>) => {
     if (!user) return;
+
+    updateLocalData(prev => ({
+      ...prev,
+      notes: prev.notes.map(n => n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n),
+    }));
 
     const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (updates.title !== undefined) dbUpdates.title = updates.title;
     if (updates.content !== undefined) dbUpdates.content = updates.content;
     if (updates.color !== undefined) dbUpdates.color = updates.color;
 
-    await supabase
-      .from('notes')
-      .update(dbUpdates)
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      notes: prev.notes.map(n =>
-        n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n
-      ),
-    }));
-  }, [user, supabase]);
+    await supabase.from('notes').update(dbUpdates).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const removeNote = useCallback(async (id: string) => {
     if (!user) return;
 
+    updateLocalData(prev => ({ ...prev, notes: prev.notes.filter(n => n.id !== id) }));
     await supabase.from('notes').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      notes: prev.notes.filter(n => n.id !== id),
-    }));
-  }, [user, supabase]);
-
-  const addFutureLetter = useCallback(async (title: string, content: string, openDate: string) => {
-    if (!user) return;
-
-    const { data: newLetter, error } = await supabase
-      .from('future_letters')
-      .insert({
-        user_id: user.id,
-        title,
-        content,
-        open_date: openDate,
-        is_opened: false,
-      })
-      .select()
-      .single();
-
-    if (!error && newLetter) {
-      setData(prev => ({
-        ...prev,
-        futureLetters: [{
-          id: newLetter.id,
-          title: newLetter.title,
-          content: newLetter.content,
-          openDate: newLetter.open_date,
-          isOpened: newLetter.is_opened,
-          createdAt: newLetter.created_at,
-        }, ...prev.futureLetters],
-      }));
-    }
-  }, [user, supabase]);
-
-  const openFutureLetter = useCallback(async (id: string) => {
-    if (!user) return;
-
-    await supabase
-      .from('future_letters')
-      .update({ is_opened: true })
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      futureLetters: prev.futureLetters.map(l =>
-        l.id === id ? { ...l, isOpened: true } : l
-      ),
-    }));
-  }, [user, supabase]);
-
-  const removeFutureLetter = useCallback(async (id: string) => {
-    if (!user) return;
-
-    await supabase.from('future_letters').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      futureLetters: prev.futureLetters.filter(l => l.id !== id),
-    }));
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const addBankAccount = useCallback(async (account: Omit<BankAccount, 'id'>) => {
     if (!user) return;
 
-    const { data: newAccount, error } = await supabase
+    const tempId = `temp_${Date.now()}`;
+    const newAccount: BankAccount = { ...account, id: tempId };
+
+    updateLocalData(prev => ({ ...prev, bankAccounts: [...prev.bankAccounts, newAccount] }));
+
+    const { data: newAccountData, error } = await supabase
       .from('bank_accounts')
       .insert({
         user_id: user.id,
@@ -654,24 +850,21 @@ export function useVisoesData() {
       .select()
       .single();
 
-    if (!error && newAccount) {
-      setData(prev => ({
+    if (!error && newAccountData) {
+      updateLocalData(prev => ({
         ...prev,
-        bankAccounts: [...prev.bankAccounts, {
-          id: newAccount.id,
-          name: newAccount.name,
-          type: newAccount.type as 'fiduciary' | 'crypto',
-          accountType: newAccount.account_type,
-          personType: newAccount.person_type,
-          balance: Number(newAccount.balance) || 0,
-          notes: newAccount.notes || '',
-        }],
+        bankAccounts: prev.bankAccounts.map(a => a.id === tempId ? { ...a, id: newAccountData.id } : a),
       }));
     }
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const updateBankAccount = useCallback(async (id: string, updates: Partial<BankAccount>) => {
     if (!user) return;
+
+    updateLocalData(prev => ({
+      ...prev,
+      bankAccounts: prev.bankAccounts.map(a => a.id === id ? { ...a, ...updates } : a),
+    }));
 
     const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (updates.name !== undefined) dbUpdates.name = updates.name;
@@ -681,35 +874,25 @@ export function useVisoesData() {
     if (updates.balance !== undefined) dbUpdates.balance = updates.balance;
     if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
 
-    await supabase
-      .from('bank_accounts')
-      .update(dbUpdates)
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      bankAccounts: prev.bankAccounts.map(a =>
-        a.id === id ? { ...a, ...updates } : a
-      ),
-    }));
-  }, [user, supabase]);
+    await supabase.from('bank_accounts').update(dbUpdates).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const removeBankAccount = useCallback(async (id: string) => {
     if (!user) return;
 
+    updateLocalData(prev => ({ ...prev, bankAccounts: prev.bankAccounts.filter(a => a.id !== id) }));
     await supabase.from('bank_accounts').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      bankAccounts: prev.bankAccounts.filter(a => a.id !== id),
-    }));
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'>) => {
     if (!user) return;
 
-    const { data: newTrans, error } = await supabase
+    const tempId = `temp_${Date.now()}`;
+    const newTransaction: Transaction = { ...transaction, id: tempId };
+
+    updateLocalData(prev => ({ ...prev, transactions: [newTransaction, ...prev.transactions] }));
+
+    const { data: newTransData, error } = await supabase
       .from('transactions')
       .insert({
         user_id: user.id,
@@ -726,27 +909,21 @@ export function useVisoesData() {
       .select()
       .single();
 
-    if (!error && newTrans) {
-      setData(prev => ({
+    if (!error && newTransData) {
+      updateLocalData(prev => ({
         ...prev,
-        transactions: [{
-          id: newTrans.id,
-          bankAccountId: newTrans.bank_account_id,
-          title: newTrans.title,
-          type: newTrans.type as 'income' | 'expense',
-          category: newTrans.category,
-          amount: Number(newTrans.amount),
-          date: newTrans.date,
-          paymentMethod: newTrans.payment_method as Transaction['paymentMethod'],
-          status: newTrans.status as 'pending' | 'confirmed',
-          notes: newTrans.notes || '',
-        }, ...prev.transactions],
+        transactions: prev.transactions.map(t => t.id === tempId ? { ...t, id: newTransData.id } : t),
       }));
     }
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const updateTransaction = useCallback(async (id: string, updates: Partial<Transaction>) => {
     if (!user) return;
+
+    updateLocalData(prev => ({
+      ...prev,
+      transactions: prev.transactions.map(t => t.id === id ? { ...t, ...updates } : t),
+    }));
 
     const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (updates.bankAccountId !== undefined) dbUpdates.bank_account_id = updates.bankAccountId;
@@ -759,30 +936,15 @@ export function useVisoesData() {
     if (updates.status !== undefined) dbUpdates.status = updates.status;
     if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
 
-    await supabase
-      .from('transactions')
-      .update(dbUpdates)
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      transactions: prev.transactions.map(t =>
-        t.id === id ? { ...t, ...updates } : t
-      ),
-    }));
-  }, [user, supabase]);
+    await supabase.from('transactions').update(dbUpdates).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const removeTransaction = useCallback(async (id: string) => {
     if (!user) return;
 
+    updateLocalData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== id) }));
     await supabase.from('transactions').delete().eq('id', id).eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      transactions: prev.transactions.filter(t => t.id !== id),
-    }));
-  }, [user, supabase]);
+  }, [user, supabase, updateLocalData]);
 
   const toggleTransactionStatus = useCallback(async (id: string) => {
     if (!user) return;
@@ -792,54 +954,31 @@ export function useVisoesData() {
 
     const newStatus = transaction.status === 'pending' ? 'confirmed' : 'pending';
 
-    await supabase
-      .from('transactions')
-      .update({ status: newStatus })
-      .eq('id', id)
-      .eq('user_id', user.id);
-
-    setData(prev => ({
+    updateLocalData(prev => ({
       ...prev,
-      transactions: prev.transactions.map(t =>
-        t.id === id ? { ...t, status: newStatus } : t
-      ),
+      transactions: prev.transactions.map(t => t.id === id ? { ...t, status: newStatus } : t),
     }));
-  }, [user, supabase, data.transactions]);
+
+    await supabase.from('transactions').update({ status: newStatus }).eq('id', id).eq('user_id', user.id);
+  }, [user, supabase, data.transactions, updateLocalData]);
 
   const setFinancePeriod = useCallback(async (period: FinancePeriod) => {
     if (!user) return;
 
-    await supabase
-      .from('user_settings')
-      .update({
-        finance_start_date: period.startDate,
-        finance_end_date: period.endDate,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', user.id);
+    updateLocalData(prev => ({ ...prev, financePeriod: period }));
 
-    setData(prev => ({
-      ...prev,
-      financePeriod: period,
-    }));
-  }, [user, supabase]);
+    await supabase.from('user_settings').update({
+      finance_start_date: period.startDate,
+      finance_end_date: period.endDate,
+    }).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const setSelectedYear = useCallback(async (year: number) => {
     if (!user) return;
 
-    await supabase
-      .from('user_settings')
-      .update({
-        selected_year: year,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', user.id);
-
-    setData(prev => ({
-      ...prev,
-      selectedYear: year,
-    }));
-  }, [user, supabase]);
+    updateLocalData(prev => ({ ...prev, selectedYear: year }));
+    await supabase.from('user_settings').update({ selected_year: year }).eq('user_id', user.id);
+  }, [user, supabase, updateLocalData]);
 
   const getFinanceSummary = useCallback((startDate: string, endDate: string) => {
     const start = new Date(startDate);
@@ -850,21 +989,10 @@ export function useVisoesData() {
       return date >= start && date <= end;
     });
 
-    const pendingIncome = filteredTransactions
-      .filter(t => t.type === 'income' && t.status === 'pending')
-      .reduce((sum, t) => sum + t.amount, 0);
-
-    const pendingExpense = filteredTransactions
-      .filter(t => t.type === 'expense' && t.status === 'pending')
-      .reduce((sum, t) => sum + t.amount, 0);
-
-    const confirmedIncome = filteredTransactions
-      .filter(t => t.type === 'income' && t.status === 'confirmed')
-      .reduce((sum, t) => sum + t.amount, 0);
-
-    const confirmedExpense = filteredTransactions
-      .filter(t => t.type === 'expense' && t.status === 'confirmed')
-      .reduce((sum, t) => sum + t.amount, 0);
+    const pendingIncome = filteredTransactions.filter(t => t.type === 'income' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0);
+    const pendingExpense = filteredTransactions.filter(t => t.type === 'expense' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0);
+    const confirmedIncome = filteredTransactions.filter(t => t.type === 'income' && t.status === 'confirmed').reduce((sum, t) => sum + t.amount, 0);
+    const confirmedExpense = filteredTransactions.filter(t => t.type === 'expense' && t.status === 'confirmed').reduce((sum, t) => sum + t.amount, 0);
 
     return {
       pendingIncome,
@@ -881,6 +1009,7 @@ export function useVisoesData() {
   return {
     data,
     isLoaded,
+    isSyncing,
     addVisionImage,
     removeVisionImage,
     resetVisionBoard,
@@ -900,9 +1029,6 @@ export function useVisoesData() {
     addNote,
     updateNote,
     removeNote,
-    addFutureLetter,
-    openFutureLetter,
-    removeFutureLetter,
     addBankAccount,
     updateBankAccount,
     removeBankAccount,
@@ -913,5 +1039,6 @@ export function useVisoesData() {
     setFinancePeriod,
     setSelectedYear,
     getFinanceSummary,
+    forceSync: loadFromSupabase,
   };
 }

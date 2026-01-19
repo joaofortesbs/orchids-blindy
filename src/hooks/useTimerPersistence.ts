@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { timerSyncManager } from '@/lib/utils/timerSync';
 
-const TIMER_STORAGE_KEY = 'blindados_timer_state_v4';
-const LIVE_SESSION_STORAGE_KEY = 'blindados_live_session_v2';
-const ACCUMULATED_TIME_KEY = 'blindados_accumulated_time_v1';
-const TIMER_BROADCAST_CHANNEL = 'blindados_timer_sync_v2';
+const TIMER_STORAGE_KEY = 'blindados_timer_state_v6';
 
 export interface TimerState {
   isRunning: boolean;
@@ -24,79 +22,6 @@ export interface LiveSession {
   isRunning: boolean;
 }
 
-export interface LiveSessionData {
-  categoryId: string;
-  elapsedSeconds: number;
-  timestamp: number;
-  startedAt: number;
-}
-
-export interface AccumulatedTimeData {
-  categoryId: string;
-  date: string;
-  totalSeconds: number;
-  lastUpdated: number;
-}
-
-function saveLiveSessionData(data: LiveSessionData | null): void {
-  try {
-    if (data) {
-      localStorage.setItem(LIVE_SESSION_STORAGE_KEY, JSON.stringify(data));
-    } else {
-      localStorage.removeItem(LIVE_SESSION_STORAGE_KEY);
-    }
-  } catch (error) {
-    console.error('Error saving live session data:', error);
-  }
-}
-
-function loadLiveSessionData(): LiveSessionData | null {
-  try {
-    const stored = localStorage.getItem(LIVE_SESSION_STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return null;
-  } catch (error) {
-    console.error('Error loading live session data:', error);
-    return null;
-  }
-}
-
-function getAccumulatedTimeKey(categoryId: string, date: string): string {
-  return `${ACCUMULATED_TIME_KEY}_${categoryId}_${date}`;
-}
-
-function saveAccumulatedTime(categoryId: string, date: string, seconds: number): void {
-  try {
-    const key = getAccumulatedTimeKey(categoryId, date);
-    const data: AccumulatedTimeData = {
-      categoryId,
-      date,
-      totalSeconds: seconds,
-      lastUpdated: Date.now(),
-    };
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch (error) {
-    console.error('Error saving accumulated time:', error);
-  }
-}
-
-function loadAccumulatedTime(categoryId: string, date: string): number {
-  try {
-    const key = getAccumulatedTimeKey(categoryId, date);
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      const data: AccumulatedTimeData = JSON.parse(stored);
-      return data.totalSeconds;
-    }
-    return 0;
-  } catch (error) {
-    console.error('Error loading accumulated time:', error);
-    return 0;
-  }
-}
-
 const DEFAULT_TIMER_STATE: TimerState = {
   isRunning: false,
   startedAt: null,
@@ -107,9 +32,20 @@ const DEFAULT_TIMER_STATE: TimerState = {
   lastUpdated: Date.now(),
 };
 
-function saveTimerState(state: TimerState): void {
+function safeLocalStorage() {
+  if (typeof window === 'undefined') return null;
   try {
-    localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function saveTimerState(state: TimerState): void {
+  const storage = safeLocalStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
       ...state,
       lastUpdated: Date.now(),
     }));
@@ -119,11 +55,12 @@ function saveTimerState(state: TimerState): void {
 }
 
 function loadTimerState(): TimerState | null {
+  const storage = safeLocalStorage();
+  if (!storage) return null;
   try {
-    const stored = localStorage.getItem(TIMER_STORAGE_KEY);
+    const stored = storage.getItem(TIMER_STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed;
+      return JSON.parse(stored);
     }
     return null;
   } catch (error) {
@@ -133,23 +70,19 @@ function loadTimerState(): TimerState | null {
 }
 
 function clearTimerState(): void {
+  const storage = safeLocalStorage();
+  if (!storage) return;
   try {
-    localStorage.removeItem(TIMER_STORAGE_KEY);
+    storage.removeItem(TIMER_STORAGE_KEY);
   } catch (error) {
     console.error('Error clearing timer state:', error);
   }
-}
-
-function getTodayDate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 export function useTimerPersistence(
   defaultCategoryId: string,
   defaultDurationSeconds: number,
   onSessionComplete?: (categoryId: string, durationMinutes: number) => void,
-  onPartialSessionSave?: (categoryId: string, durationMinutes: number) => void
 ) {
   const [timerState, setTimerState] = useState<TimerState>({
     ...DEFAULT_TIMER_STATE,
@@ -161,10 +94,12 @@ export function useTimerPersistence(
   const [isLoaded, setIsLoaded] = useState(false);
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
   
-  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastSavedSecondsRef = useRef<number>(0);
-  const sessionStartTimeRef = useRef<number | null>(null);
+  const timerStateRef = useRef(timerState);
+
+  useEffect(() => {
+    timerStateRef.current = timerState;
+  }, [timerState]);
 
   const calculateElapsedSeconds = useCallback((state: TimerState): number => {
     if (!state.isRunning || !state.startedAt) {
@@ -180,49 +115,43 @@ export function useTimerPersistence(
     return Math.max(0, state.totalDurationSeconds - elapsed);
   }, [calculateElapsedSeconds]);
 
-  const broadcastState = useCallback((state: TimerState, liveSessionData?: LiveSession | null) => {
-    if (broadcastChannelRef.current) {
-      try {
-        broadcastChannelRef.current.postMessage({
-          type: 'TIMER_STATE_UPDATE',
-          state,
-          liveSession: liveSessionData,
-          timestamp: Date.now(),
-        });
-      } catch (error) {
-        console.error('Error broadcasting state:', error);
-      }
-    }
-  }, []);
-
-  const updateLiveSession = useCallback((state: TimerState, saveToStorage: boolean = true): LiveSession | null => {
-    if (state.isRunning && state.categoryId && state.startedAt) {
-      const elapsed = calculateElapsedSeconds(state);
+  const syncLiveSession = useCallback((state: TimerState, isPaused: boolean = false) => {
+    const elapsed = calculateElapsedSeconds(state);
+    
+    if ((state.isRunning || isPaused) && state.categoryId) {
       const session: LiveSession = {
         categoryId: state.categoryId,
         elapsedMinutes: Math.floor(elapsed / 60),
         elapsedSeconds: elapsed,
-        isRunning: true,
+        isRunning: state.isRunning,
       };
       setLiveSession(session);
       
-      if (saveToStorage) {
-        saveLiveSessionData({
-          categoryId: state.categoryId,
-          elapsedSeconds: elapsed,
-          timestamp: Date.now(),
-          startedAt: state.startedAt,
-        });
-        
-        const today = getTodayDate();
-        saveAccumulatedTime(state.categoryId, today, elapsed);
+      if (timerSyncManager) {
+        if (isPaused) {
+          timerSyncManager.pause({
+            categoryId: state.categoryId,
+            elapsedSeconds: elapsed,
+            isRunning: false,
+            isPaused: true,
+            timestamp: Date.now(),
+          });
+        } else if (state.isRunning) {
+          timerSyncManager.update({
+            categoryId: state.categoryId,
+            elapsedSeconds: elapsed,
+            isRunning: true,
+            isPaused: false,
+            timestamp: Date.now(),
+          });
+        }
       }
       
       return session;
     } else {
       setLiveSession(null);
-      if (saveToStorage) {
-        saveLiveSessionData(null);
+      if (timerSyncManager) {
+        timerSyncManager.clear();
       }
       return null;
     }
@@ -230,7 +159,6 @@ export function useTimerPersistence(
 
   useEffect(() => {
     const stored = loadTimerState();
-    const storedLiveSession = loadLiveSessionData();
     
     if (stored && stored.categoryId) {
       if (stored.isRunning && stored.startedAt) {
@@ -241,7 +169,7 @@ export function useTimerPersistence(
         
         if (currentTimeLeft <= 0) {
           clearTimerState();
-          saveLiveSessionData(null);
+          if (timerSyncManager) timerSyncManager.clear();
           if (onSessionComplete) {
             onSessionComplete(stored.categoryId, Math.floor(stored.totalDurationSeconds / 60));
           }
@@ -254,46 +182,15 @@ export function useTimerPersistence(
         } else {
           setTimerState(stored);
           setTimeLeft(currentTimeLeft);
-          sessionStartTimeRef.current = stored.startedAt;
-          updateLiveSession(stored, true);
+          syncLiveSession(stored);
         }
+      } else if (stored.accumulatedSeconds > 0) {
+        setTimerState(stored);
+        setTimeLeft(calculateTimeLeft(stored));
+        syncLiveSession(stored, true);
       } else {
         setTimerState(stored);
         setTimeLeft(calculateTimeLeft(stored));
-      }
-    } else if (storedLiveSession && storedLiveSession.startedAt) {
-      const now = Date.now();
-      const runningSeconds = Math.floor((now - storedLiveSession.startedAt) / 1000);
-      
-      const restoredState: TimerState = {
-        isRunning: true,
-        startedAt: storedLiveSession.startedAt,
-        pausedAt: null,
-        accumulatedSeconds: 0,
-        categoryId: storedLiveSession.categoryId,
-        totalDurationSeconds: defaultDurationSeconds,
-        lastUpdated: now,
-      };
-      
-      const timeRemaining = Math.max(0, defaultDurationSeconds - runningSeconds);
-      
-      if (timeRemaining <= 0) {
-        clearTimerState();
-        saveLiveSessionData(null);
-        if (onSessionComplete) {
-          onSessionComplete(storedLiveSession.categoryId, Math.floor(defaultDurationSeconds / 60));
-        }
-        setTimerState({
-          ...DEFAULT_TIMER_STATE,
-          categoryId: defaultCategoryId,
-          totalDurationSeconds: defaultDurationSeconds,
-        });
-        setTimeLeft(defaultDurationSeconds);
-      } else {
-        setTimerState(restoredState);
-        setTimeLeft(timeRemaining);
-        sessionStartTimeRef.current = storedLiveSession.startedAt;
-        updateLiveSession(restoredState, true);
       }
     } else {
       setTimerState({
@@ -308,70 +205,51 @@ export function useTimerPersistence(
   }, []);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      broadcastChannelRef.current = new BroadcastChannel(TIMER_BROADCAST_CHANNEL);
-      
-      broadcastChannelRef.current.onmessage = (event) => {
-        if (event.data.type === 'TIMER_STATE_UPDATE') {
-          const receivedState = event.data.state as TimerState;
-          const receivedLiveSession = event.data.liveSession as LiveSession | null;
-          
-          setTimerState(receivedState);
-          setTimeLeft(calculateTimeLeft(receivedState));
-          
-          if (receivedLiveSession) {
-            setLiveSession(receivedLiveSession);
-          } else if (!receivedState.isRunning) {
-            setLiveSession(null);
-          }
-          
-          if (receivedState.startedAt) {
-            sessionStartTimeRef.current = receivedState.startedAt;
-          }
-        } else if (event.data.type === 'REQUEST_STATE') {
-          const currentLiveSession = updateLiveSession(timerState, false);
-          broadcastState(timerState, currentLiveSession);
-        }
-      };
-
-      broadcastChannelRef.current.postMessage({ type: 'REQUEST_STATE' });
-    }
-
-    return () => {
-      if (broadcastChannelRef.current) {
-        broadcastChannelRef.current.close();
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     if (!isLoaded) return;
 
     const handleBeforeUnload = () => {
-      if (timerState.isRunning && timerState.startedAt) {
-        saveTimerState(timerState);
-        const elapsed = calculateElapsedSeconds(timerState);
-        saveLiveSessionData({
-          categoryId: timerState.categoryId,
-          elapsedSeconds: elapsed,
-          timestamp: Date.now(),
-          startedAt: timerState.startedAt,
-        });
-        const today = getTodayDate();
-        saveAccumulatedTime(timerState.categoryId, today, elapsed);
+      const state = timerStateRef.current;
+      if (state.isRunning && state.startedAt) {
+        saveTimerState(state);
+        const elapsed = calculateElapsedSeconds(state);
+        if (timerSyncManager) {
+          timerSyncManager.update({
+            categoryId: state.categoryId,
+            elapsedSeconds: elapsed,
+            isRunning: true,
+            isPaused: false,
+            timestamp: Date.now(),
+          });
+        }
+      } else if (state.accumulatedSeconds > 0) {
+        saveTimerState(state);
+        if (timerSyncManager) {
+          timerSyncManager.pause({
+            categoryId: state.categoryId,
+            elapsedSeconds: state.accumulatedSeconds,
+            isRunning: false,
+            isPaused: true,
+            timestamp: Date.now(),
+          });
+        }
       }
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && timerState.isRunning) {
-        saveTimerState(timerState);
-        updateLiveSession(timerState, true);
+      const state = timerStateRef.current;
+      if (document.visibilityState === 'hidden') {
+        if (state.isRunning) {
+          saveTimerState(state);
+          syncLiveSession(state);
+        } else if (state.accumulatedSeconds > 0) {
+          saveTimerState(state);
+          syncLiveSession(state, true);
+        }
       } else if (document.visibilityState === 'visible') {
-        if (timerState.isRunning && timerState.startedAt) {
-          const newTimeLeft = calculateTimeLeft(timerState);
+        if (state.isRunning && state.startedAt) {
+          const newTimeLeft = calculateTimeLeft(state);
           setTimeLeft(newTimeLeft);
-          updateLiveSession(timerState, true);
-          broadcastState(timerState, liveSession);
+          syncLiveSession(state);
         }
       }
     };
@@ -383,7 +261,7 @@ export function useTimerPersistence(
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isLoaded, timerState, liveSession, updateLiveSession, calculateTimeLeft, calculateElapsedSeconds, broadcastState]);
+  }, [isLoaded, calculateTimeLeft, calculateElapsedSeconds, syncLiveSession]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -393,11 +271,8 @@ export function useTimerPersistence(
         const newTimeLeft = calculateTimeLeft(timerState);
         setTimeLeft(newTimeLeft);
         
-        const currentSession = updateLiveSession(timerState, true);
-        
+        syncLiveSession(timerState);
         saveTimerState(timerState);
-        
-        broadcastState(timerState, currentSession);
 
         if (newTimeLeft <= 0) {
           const completedState: TimerState = {
@@ -409,11 +284,8 @@ export function useTimerPersistence(
           
           setTimerState(completedState);
           clearTimerState();
-          saveLiveSessionData(null);
           setLiveSession(null);
-          broadcastState(completedState, null);
-          sessionStartTimeRef.current = null;
-          lastSavedSecondsRef.current = 0;
+          if (timerSyncManager) timerSyncManager.clear();
           
           if (onSessionComplete) {
             onSessionComplete(timerState.categoryId, Math.floor(timerState.totalDurationSeconds / 60));
@@ -433,7 +305,7 @@ export function useTimerPersistence(
         intervalRef.current = null;
       }
     };
-  }, [timerState.isRunning, timerState.startedAt, isLoaded, onSessionComplete, calculateTimeLeft, timerState, updateLiveSession, broadcastState]);
+  }, [timerState.isRunning, timerState.startedAt, isLoaded, onSessionComplete, calculateTimeLeft, timerState, syncLiveSession]);
 
   const start = useCallback(() => {
     const now = Date.now();
@@ -445,26 +317,14 @@ export function useTimerPersistence(
       lastUpdated: now,
     };
     
-    sessionStartTimeRef.current = now;
-    lastSavedSecondsRef.current = 0;
-    
     setTimerState(newState);
     saveTimerState(newState);
-    
-    const session = updateLiveSession(newState, true);
-    broadcastState(newState, session);
-  }, [timerState, broadcastState, updateLiveSession]);
+    syncLiveSession(newState);
+  }, [timerState, syncLiveSession]);
 
   const pause = useCallback(() => {
     const now = Date.now();
     const elapsed = calculateElapsedSeconds(timerState);
-    
-    const today = getTodayDate();
-    saveAccumulatedTime(timerState.categoryId, today, elapsed);
-    
-    if (onPartialSessionSave && elapsed > 0) {
-      onPartialSessionSave(timerState.categoryId, elapsed / 60);
-    }
     
     const newState: TimerState = {
       ...timerState,
@@ -477,13 +337,24 @@ export function useTimerPersistence(
     
     setTimerState(newState);
     saveTimerState(newState);
-    setLiveSession(null);
-    saveLiveSessionData(null);
-    broadcastState(newState, null);
     
-    sessionStartTimeRef.current = null;
-    lastSavedSecondsRef.current = 0;
-  }, [timerState, calculateElapsedSeconds, broadcastState, onPartialSessionSave]);
+    if (timerSyncManager) {
+      timerSyncManager.pause({
+        categoryId: timerState.categoryId,
+        elapsedSeconds: elapsed,
+        isRunning: false,
+        isPaused: true,
+        timestamp: now,
+      });
+    }
+    
+    setLiveSession({
+      categoryId: timerState.categoryId,
+      elapsedMinutes: Math.floor(elapsed / 60),
+      elapsedSeconds: elapsed,
+      isRunning: false,
+    });
+  }, [timerState, calculateElapsedSeconds]);
 
   const reset = useCallback(() => {
     const newState: TimerState = {
@@ -497,12 +368,8 @@ export function useTimerPersistence(
     setTimeLeft(timerState.totalDurationSeconds);
     clearTimerState();
     setLiveSession(null);
-    saveLiveSessionData(null);
-    broadcastState(newState, null);
-    
-    sessionStartTimeRef.current = null;
-    lastSavedSecondsRef.current = 0;
-  }, [timerState.categoryId, timerState.totalDurationSeconds, broadcastState]);
+    if (timerSyncManager) timerSyncManager.clear();
+  }, [timerState.categoryId, timerState.totalDurationSeconds]);
 
   const setCategory = useCallback((categoryId: string, durationSeconds: number) => {
     if (timerState.isRunning) return;
@@ -517,8 +384,8 @@ export function useTimerPersistence(
     setTimerState(newState);
     setTimeLeft(durationSeconds);
     clearTimerState();
-    broadcastState(newState, null);
-  }, [timerState.isRunning, broadcastState]);
+    if (timerSyncManager) timerSyncManager.clear();
+  }, [timerState.isRunning]);
 
   const toggle = useCallback(() => {
     if (timerState.isRunning) {
@@ -531,6 +398,7 @@ export function useTimerPersistence(
   return {
     timeLeft,
     isRunning: timerState.isRunning,
+    isPaused: !timerState.isRunning && timerState.accumulatedSeconds > 0,
     categoryId: timerState.categoryId,
     totalDurationSeconds: timerState.totalDurationSeconds,
     liveSession,

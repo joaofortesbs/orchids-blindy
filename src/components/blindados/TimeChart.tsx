@@ -3,13 +3,12 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
-import { BarChart3, TrendingUp, Zap } from 'lucide-react';
+import { BarChart3, TrendingUp, Zap, Pause } from 'lucide-react';
 import { PomodoroSession, PomodoroCategory, ChartViewType, ChartPeriod } from '@/lib/types/blindados';
 import { LiveSession } from '@/hooks/useTimerPersistence';
+import { timerSyncManager, LiveSessionEvent } from '@/lib/utils/timerSync';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, eachDayOfInterval, eachWeekOfInterval, eachMonthOfInterval, isWithinInterval, parseISO, subDays, subWeeks, subMonths, subYears } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-
-const LIVE_SESSION_STORAGE_KEY = 'blindados_live_session_v2';
 
 interface TimeChartProps {
   sessions: PomodoroSession[];
@@ -17,47 +16,59 @@ interface TimeChartProps {
   liveSession?: LiveSession | null;
 }
 
-function loadLiveSessionFromStorage(): { categoryId: string; elapsedSeconds: number; startedAt?: number } | null {
-  try {
-    const stored = localStorage.getItem(LIVE_SESSION_STORAGE_KEY);
-    if (stored) {
-      const data = JSON.parse(stored);
-      if (data.startedAt) {
-        const now = Date.now();
-        const elapsedSinceStart = Math.floor((now - data.startedAt) / 1000);
-        return {
-          ...data,
-          elapsedSeconds: elapsedSinceStart,
-        };
-      }
-      return data;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export function TimeChart({ sessions, categories, liveSession }: TimeChartProps) {
+export function TimeChart({ sessions, categories, liveSession: propLiveSession }: TimeChartProps) {
   const [chartType, setChartType] = useState<ChartViewType>('bar');
   const [period, setPeriod] = useState<ChartPeriod>('daily');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(categories.map(c => c.id));
   const [isAnimationEnabled, setIsAnimationEnabled] = useState(true);
   const previousChartTypeRef = useRef<ChartViewType>(chartType);
-  const [storedLiveSession, setStoredLiveSession] = useState<{ categoryId: string; elapsedSeconds: number } | null>(null);
+  const [syncedSession, setSyncedSession] = useState<LiveSessionEvent | null>(null);
+  const [forceUpdate, setForceUpdate] = useState(0);
 
   useEffect(() => {
-    const stored = loadLiveSessionFromStorage();
-    if (stored && !liveSession) {
-      setStoredLiveSession(stored);
-    }
-  }, [liveSession]);
+    if (!timerSyncManager) return;
 
-  useEffect(() => {
-    if (liveSession) {
-      setStoredLiveSession(null);
+    const unsubscribe = timerSyncManager.subscribe((session) => {
+      setSyncedSession(session);
+    });
+
+    const intervalId = setInterval(() => {
+      if (timerSyncManager) {
+        const active = timerSyncManager.getActiveSession();
+        if (active) {
+          setSyncedSession(active);
+          setForceUpdate(prev => prev + 1);
+        }
+      }
+    }, 1000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  const effectiveLiveSession = useMemo(() => {
+    if (propLiveSession?.isRunning) {
+      return {
+        categoryId: propLiveSession.categoryId,
+        elapsedMinutes: Math.floor(propLiveSession.elapsedSeconds / 60),
+        elapsedSeconds: propLiveSession.elapsedSeconds,
+        isRunning: true,
+        isPaused: false,
+      };
     }
-  }, [liveSession]);
+    if (syncedSession) {
+      return {
+        categoryId: syncedSession.categoryId,
+        elapsedMinutes: Math.floor(syncedSession.elapsedSeconds / 60),
+        elapsedSeconds: syncedSession.elapsedSeconds,
+        isRunning: syncedSession.isRunning,
+        isPaused: syncedSession.isPaused || false,
+      };
+    }
+    return null;
+  }, [propLiveSession, syncedSession, forceUpdate]);
 
   useEffect(() => {
     if (previousChartTypeRef.current !== chartType) {
@@ -76,13 +87,6 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
     }, 1500);
     return () => clearTimeout(timeout);
   }, []);
-
-  const effectiveLiveSession = liveSession || (storedLiveSession ? {
-    categoryId: storedLiveSession.categoryId,
-    elapsedMinutes: Math.floor(storedLiveSession.elapsedSeconds / 60),
-    elapsedSeconds: storedLiveSession.elapsedSeconds,
-    isRunning: false,
-  } : null);
 
   const chartData = useMemo(() => {
     const now = new Date();
@@ -164,7 +168,7 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
 
       return dataPoint;
     });
-  }, [sessions, categories, period, selectedCategories, effectiveLiveSession]);
+  }, [sessions, categories, period, selectedCategories, effectiveLiveSession, forceUpdate]);
 
   const toggleCategory = (categoryId: string) => {
     setSelectedCategories(prev => 
@@ -182,7 +186,8 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
         <p className="text-white/60 text-xs mb-2">{label}</p>
         {payload.map((entry, index) => {
           const category = categories.find(c => c.id === entry.name);
-          const isLive = effectiveLiveSession?.categoryId === entry.name;
+          const isLive = effectiveLiveSession?.categoryId === entry.name && effectiveLiveSession?.isRunning;
+          const isPaused = effectiveLiveSession?.categoryId === entry.name && effectiveLiveSession?.isPaused;
           const minutes = Math.floor(entry.value);
           const seconds = Math.round((entry.value - minutes) * 60);
           return (
@@ -193,7 +198,8 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
               />
               <span className="text-white">
                 {category?.name}: {minutes}m {seconds}s
-                {isLive && effectiveLiveSession?.isRunning && <span className="text-[#00f6ff] ml-1 text-xs">(ao vivo)</span>}
+                {isLive && <span className="text-[#00f6ff] ml-1 text-xs">(ao vivo)</span>}
+                {isPaused && <span className="text-amber-400 ml-1 text-xs">(pausado)</span>}
               </span>
             </div>
           );
@@ -213,7 +219,7 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
     }
     
     return total;
-  }, [sessions, effectiveLiveSession]);
+  }, [sessions, effectiveLiveSession, forceUpdate]);
 
   const formatTotalTime = (minutes: number) => {
     const mins = Math.floor(minutes);
@@ -240,6 +246,7 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
             <div className="flex items-center gap-3">
               {categories.map((cat) => {
                 const isLive = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isRunning;
+                const isPaused = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused;
                 return (
                   <button
                     key={cat.id}
@@ -256,6 +263,9 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
                     {isLive && (
                       <Zap className="w-3 h-3 text-[#00f6ff] animate-pulse" />
                     )}
+                    {isPaused && (
+                      <Pause className="w-3 h-3 text-amber-400" />
+                    )}
                   </button>
                 );
               })}
@@ -264,13 +274,25 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
             <div className="flex items-center gap-3">
               {effectiveLiveSession && (
                 <motion.div
+                  key={`live-${forceUpdate}`}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#00f6ff]/10 border border-[#00f6ff]/30"
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${
+                    effectiveLiveSession.isPaused 
+                      ? 'bg-amber-500/10 border-amber-500/30' 
+                      : 'bg-[#00f6ff]/10 border-[#00f6ff]/30'
+                  }`}
                 >
-                  <div className={`w-2 h-2 rounded-full bg-[#00f6ff] ${effectiveLiveSession.isRunning ? 'animate-pulse' : ''}`} />
-                  <span className="text-xs text-[#00f6ff] font-medium">
+                  <div className={`w-2 h-2 rounded-full ${
+                    effectiveLiveSession.isRunning 
+                      ? 'bg-[#00f6ff] animate-pulse' 
+                      : 'bg-amber-400'
+                  }`} />
+                  <span className={`text-xs font-medium tabular-nums ${
+                    effectiveLiveSession.isPaused ? 'text-amber-400' : 'text-[#00f6ff]'
+                  }`}>
                     {Math.floor(effectiveLiveSession.elapsedSeconds / 60)}m {effectiveLiveSession.elapsedSeconds % 60}s
+                    {effectiveLiveSession.isPaused && <span className="ml-1 text-[10px]">(pausado)</span>}
                   </span>
                 </motion.div>
               )}
@@ -329,17 +351,23 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
                       maxBarSize={40}
                       isAnimationActive={isAnimationEnabled}
                     >
-                      {chartData.map((entry, index) => (
-                        <Cell 
-                          key={`cell-${index}`}
-                          fill={cat.color}
-                          style={{
-                            filter: effectiveLiveSession?.categoryId === cat.id && index === chartData.length - 1 
-                              ? `drop-shadow(0 0 8px ${cat.color})` 
-                              : undefined,
-                          }}
-                        />
-                      ))}
+                      {chartData.map((entry, index) => {
+                        const isLive = effectiveLiveSession?.categoryId === cat.id && index === chartData.length - 1;
+                        const isPaused = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused && index === chartData.length - 1;
+                        return (
+                          <Cell 
+                            key={`cell-${index}`}
+                            fill={cat.color}
+                            style={{
+                              filter: isLive && !isPaused
+                                ? `drop-shadow(0 0 8px ${cat.color})` 
+                                : isPaused 
+                                  ? `drop-shadow(0 0 4px #f59e0b)`
+                                  : undefined,
+                            }}
+                          />
+                        );
+                      })}
                     </Bar>
                   ))}
                 </BarChart>
@@ -380,7 +408,7 @@ export function TimeChart({ sessions, categories, liveSession }: TimeChartProps)
 
           <div className="flex items-center justify-between mt-4">
             <div className="text-xs text-white/40">
-              Hoje: <span className="text-[#00f6ff] font-medium">{formatTotalTime(totalTodayMinutes)}</span>
+              Hoje: <span className="text-[#00f6ff] font-medium tabular-nums">{formatTotalTime(totalTodayMinutes)}</span>
             </div>
 
             <div className="flex items-center justify-center gap-2">

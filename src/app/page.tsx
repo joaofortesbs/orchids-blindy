@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sidebar } from '@/components/blindados/Sidebar';
 import { PomodoroTimer } from '@/components/blindados/PomodoroTimer';
@@ -9,6 +9,7 @@ import { KanbanBoard } from '@/components/blindados/KanbanBoard';
 import { VisoesDashboard } from '@/components/visoes/VisoesDashboard';
 import { AuthPage } from '@/components/auth/AuthPage';
 import { useBlindadosData } from '@/hooks/useBlindadosData';
+import { useAutoFix } from '@/hooks/useAutoFix';
 import { LiveSession } from '@/hooks/useTimerPersistence';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { AuthProvider } from '@/lib/contexts/AuthContext';
@@ -31,6 +32,8 @@ function MainApp() {
     addPomodoroSession,
     updatePomodoroSettings,
   } = useBlindadosData();
+
+  useAutoFix();
 
   const [activeSection, setActiveSection] = useState<Section>('flows');
   const [collapsed, setCollapsed] = useState(false);
