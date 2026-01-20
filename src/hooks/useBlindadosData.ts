@@ -250,11 +250,7 @@ export function useBlindadosData() {
   }, []);
 
   const addKanbanCard = useCallback(async (columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) {
-      console.error('[useBlindadosData] addKanbanCard: service not available');
-      return;
-    }
+    console.log('[useBlindadosData] addKanbanCard: Starting', { columnId, title: card.title });
     
     if (columnId.startsWith('temp-')) {
       console.error('[useBlindadosData] addKanbanCard: Cannot add card to temporary column');
@@ -282,6 +278,7 @@ export function useBlindadosData() {
     };
     
     pendingOperationsRef.current++;
+    console.log('[useBlindadosData] addKanbanCard: Pending ops:', pendingOperationsRef.current);
     
     setData(prev => {
       const updated = {
@@ -297,66 +294,95 @@ export function useBlindadosData() {
       return updated;
     });
     
-    try {
-      const newCard = await kanbanService.addCard(columnId, card, position);
-      
-      if (newCard) {
-        console.log('[useBlindadosData] addKanbanCard: SUCCESS - replacing temp ID with:', newCard.id);
-        setData(prev => {
-          const updated = {
-            ...prev,
-            kanban: {
-              columns: prev.kanban.columns.map(c =>
-                c.id === columnId 
-                  ? { ...c, cards: c.cards.map(existingCard => 
-                      existingCard.id === tempId ? newCard : existingCard
-                    )}
-                  : c
-              ),
-            },
-            lastUpdated: new Date().toISOString(),
-          };
-          setCache(updated);
-          return updated;
+    console.log('[useBlindadosData] addKanbanCard: Using API route for robust persistence...');
+    
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log('[useBlindadosData] addKanbanCard: Attempt', attempt, 'of', MAX_RETRIES);
+        
+        const res = await fetch('/api/kanban/add-card', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            columnId,
+            title: card.title,
+            description: card.description || '',
+            priority: card.priority || 'media',
+            tags: card.tags || [],
+            subtasks: card.subtasks || [],
+            position,
+          }),
         });
-      } else {
-        console.error('[useBlindadosData] addKanbanCard: FAILED - removing optimistic card');
-        setData(prev => {
-          const updated = {
-            ...prev,
-            kanban: {
-              columns: prev.kanban.columns.map(c =>
-                c.id === columnId 
-                  ? { ...c, cards: c.cards.filter(existingCard => existingCard.id !== tempId) }
-                  : c
-              ),
-            },
-            lastUpdated: new Date().toISOString(),
-          };
-          setCache(updated);
-          return updated;
-        });
+        
+        if (res.ok) {
+          const result = await res.json();
+          
+          if (result.success && result.card) {
+            console.log('[useBlindadosData] addKanbanCard: SUCCESS on attempt', attempt, '- Card ID:', result.card.id);
+            
+            setData(prev => {
+              const updated = {
+                ...prev,
+                kanban: {
+                  columns: prev.kanban.columns.map(c =>
+                    c.id === columnId 
+                      ? { ...c, cards: c.cards.map(existingCard => 
+                          existingCard.id === tempId ? result.card : existingCard
+                        )}
+                      : c
+                  ),
+                },
+                lastUpdated: new Date().toISOString(),
+              };
+              setCache(updated);
+              return updated;
+            });
+            
+            pendingOperationsRef.current--;
+            console.log('[useBlindadosData] addKanbanCard: Completed - Pending ops:', pendingOperationsRef.current);
+            return;
+          }
+        }
+        
+        const errorData = await res.json().catch(() => ({}));
+        lastError = new Error(`HTTP ${res.status}: ${errorData.error || 'Unknown error'}`);
+        console.warn('[useBlindadosData] addKanbanCard: Attempt', attempt, 'failed:', lastError.message);
+        
+      } catch (e) {
+        lastError = e as Error;
+        console.warn('[useBlindadosData] addKanbanCard: Attempt', attempt, 'error:', e);
       }
-    } catch (e) {
-      console.error('[useBlindadosData] addKanbanCard error:', e);
-      setData(prev => {
-        const updated = {
-          ...prev,
-          kanban: {
-            columns: prev.kanban.columns.map(c =>
-              c.id === columnId 
-                ? { ...c, cards: c.cards.filter(existingCard => existingCard.id !== tempId) }
-                : c
-            ),
-          },
-          lastUpdated: new Date().toISOString(),
-        };
-        setCache(updated);
-        return updated;
-      });
-    } finally {
-      pendingOperationsRef.current--;
+      
+      if (attempt < MAX_RETRIES) {
+        const delay = 500 * Math.pow(2, attempt - 1);
+        console.log('[useBlindadosData] addKanbanCard: Waiting', delay, 'ms before retry...');
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
+    
+    console.error('[useBlindadosData] addKanbanCard: All retries failed:', lastError);
+    
+    setData(prev => {
+      const updated = {
+        ...prev,
+        kanban: {
+          columns: prev.kanban.columns.map(c =>
+            c.id === columnId 
+              ? { ...c, cards: c.cards.filter(existingCard => existingCard.id !== tempId) }
+              : c
+          ),
+        },
+        lastUpdated: new Date().toISOString(),
+      };
+      setCache(updated);
+      return updated;
+    });
+    
+    pendingOperationsRef.current--;
+    console.log('[useBlindadosData] addKanbanCard: Failed - Pending ops:', pendingOperationsRef.current);
   }, []);
 
   const updateKanbanCard = useCallback(async (columnId: string, cardId: string, updates: Partial<KanbanCard>) => {
