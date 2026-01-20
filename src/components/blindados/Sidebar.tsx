@@ -206,6 +206,66 @@ export function Sidebar({
       )}
 
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        {selectedOrganization && (
+          <>
+            {!collapsed && (
+              <div className="px-3 py-2">
+                <span className="text-[10px] uppercase tracking-wider text-white/30 font-semibold">
+                  Profissional
+                </span>
+              </div>
+            )}
+
+            {profissionalItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeSection === item.id;
+              
+              return (
+                <motion.button
+                  key={item.id}
+                  onClick={() => onSectionChange(item.id)}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className={`
+                    relative w-full flex items-center gap-3 px-3 py-3 rounded-xl
+                    transition-all duration-300 group
+                    ${isActive 
+                      ? 'bg-[#00f6ff]/10 text-[#00f6ff]' 
+                      : 'text-white/60 hover:text-white hover:bg-white/5'
+                    }
+                  `}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeIndicatorPro"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-r-full bg-[#00f6ff]"
+                      initial={false}
+                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    />
+                  )}
+                  
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-[#00f6ff]' : ''}`} />
+                  
+                  {!collapsed && (
+                    <motion.span
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-sm font-medium"
+                    >
+                      {item.label}
+                    </motion.span>
+                  )}
+                </motion.button>
+              );
+            })}
+
+            {!collapsed && (
+              <div className="my-3 mx-3 border-t border-white/5" />
+            )}
+          </>
+        )}
+
         {!collapsed && (
           <div className="px-3 py-2">
             <span className="text-[10px] uppercase tracking-wider text-white/30 font-semibold">
@@ -261,66 +321,6 @@ export function Sidebar({
             </motion.button>
           );
         })}
-
-        {selectedOrganization && (
-          <>
-            {!collapsed && (
-              <div className="my-3 mx-3 border-t border-white/5" />
-            )}
-
-            {!collapsed && (
-              <div className="px-3 py-2">
-                <span className="text-[10px] uppercase tracking-wider text-white/30 font-semibold">
-                  Profissional
-                </span>
-              </div>
-            )}
-
-            {profissionalItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeSection === item.id;
-              
-              return (
-                <motion.button
-                  key={item.id}
-                  onClick={() => onSectionChange(item.id)}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className={`
-                    relative w-full flex items-center gap-3 px-3 py-3 rounded-xl
-                    transition-all duration-300 group
-                    ${isActive 
-                      ? 'bg-[#00f6ff]/10 text-[#00f6ff]' 
-                      : 'text-white/60 hover:text-white hover:bg-white/5'
-                    }
-                  `}
-                >
-                  {isActive && (
-                    <motion.div
-                      layoutId="activeIndicatorPro"
-                      className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-r-full bg-[#00f6ff]"
-                      initial={false}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
-                  )}
-                  
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-[#00f6ff]' : ''}`} />
-                  
-                  {!collapsed && (
-                    <motion.span
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="text-sm font-medium"
-                    >
-                      {item.label}
-                    </motion.span>
-                  )}
-                </motion.button>
-              );
-            })}
-          </>
-        )}
       </nav>
 
       <div className="px-3 py-4 border-t border-[#00f6ff]/10 space-y-1">
