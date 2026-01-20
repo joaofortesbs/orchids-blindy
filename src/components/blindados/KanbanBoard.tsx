@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   DndContext,
@@ -26,10 +26,11 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
+  horizontalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, MoreVertical, GripVertical, Trash2, X, Check } from 'lucide-react';
+import { Plus, MoreVertical, GripVertical, Trash2, X, Check, Pencil, Move } from 'lucide-react';
 import { KanbanColumn, KanbanCard, Priority, SubTask } from '@/lib/types/blindados';
 
 interface KanbanBoardProps {
@@ -48,6 +49,55 @@ const priorityColors: Record<Priority, { bg: string; text: string; label: string
   media: { bg: 'bg-amber-500/20', text: 'text-amber-400', label: 'PRIORIDADE MÉDIA' },
   baixa: { bg: 'bg-green-500/20', text: 'text-green-400', label: 'PRIORIDADE BAIXA' },
 };
+
+function ColumnMenu({ 
+  column, 
+  onRename, 
+  onDelete, 
+  onClose 
+}: { 
+  column: KanbanColumn;
+  onRename: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      ref={menuRef}
+      initial={{ opacity: 0, scale: 0.95, y: -5 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95, y: -5 }}
+      className="absolute right-0 top-8 z-50 w-48 bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-xl shadow-xl overflow-hidden"
+    >
+      <button
+        onClick={() => { onRename(); onClose(); }}
+        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-white hover:bg-white/5 transition-colors"
+      >
+        <Pencil className="w-4 h-4 text-[#00f6ff]" />
+        Renomear coluna
+      </button>
+      <button
+        onClick={() => { onDelete(); onClose(); }}
+        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+      >
+        <Trash2 className="w-4 h-4" />
+        Excluir coluna
+      </button>
+    </motion.div>
+  );
+}
 
 function DroppableColumn({ 
   column, 
@@ -70,6 +120,69 @@ function DroppableColumn({
         isOver ? 'bg-[#00f6ff]/5 ring-2 ring-[#00f6ff]/30 ring-inset' : ''
       }`}
     >
+      {children}
+    </div>
+  );
+}
+
+function SortableColumn({
+  column,
+  children,
+  onOpenMenu,
+  isDraggingColumn,
+}: {
+  column: KanbanColumn;
+  children: React.ReactNode;
+  onOpenMenu: () => void;
+  isDraggingColumn: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `column-${column.id}`,
+    data: { type: 'sortable-column', column },
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex-shrink-0 w-72 bg-[#010516]/50 rounded-xl border border-white/5 p-3 flex flex-col max-h-full transition-shadow ${
+        isDragging ? 'shadow-xl shadow-[#00f6ff]/20 border-[#00f6ff]/30' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div
+            {...attributes}
+            {...listeners}
+            className="p-1 rounded cursor-grab active:cursor-grabbing hover:bg-white/10 transition-colors"
+          >
+            <GripVertical className="w-4 h-4 text-white/30" />
+          </div>
+          <h3 className="text-xs font-semibold text-white/60 tracking-wider">{column.title}</h3>
+        </div>
+        <div className="flex items-center gap-1 relative">
+          <span className="text-xs text-white/30">{column.cards.length}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenMenu(); }}
+            className="p-1 rounded hover:bg-white/10 transition-colors"
+          >
+            <MoreVertical className="w-4 h-4 text-white/40" />
+          </button>
+        </div>
+      </div>
       {children}
     </div>
   );
@@ -178,6 +291,32 @@ function CardOverlay({ card }: { card: KanbanCard }) {
   );
 }
 
+function ColumnOverlay({ column }: { column: KanbanColumn }) {
+  return (
+    <motion.div
+      initial={{ scale: 1.02, rotate: 1 }}
+      animate={{ scale: 1.03, rotate: 2 }}
+      className="w-72 bg-[#010516]/90 rounded-xl border border-[#00f6ff]/50 p-3 shadow-2xl shadow-[#00f6ff]/30 cursor-grabbing"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <GripVertical className="w-4 h-4 text-[#00f6ff]" />
+        <h3 className="text-xs font-semibold text-white tracking-wider">{column.title}</h3>
+        <span className="text-xs text-white/50 ml-auto">{column.cards.length}</span>
+      </div>
+      <div className="space-y-2 opacity-60">
+        {column.cards.slice(0, 2).map(card => (
+          <div key={card.id} className="bg-[#0a0f1f] rounded-lg p-2 border border-white/10">
+            <p className="text-xs text-white/60 truncate">{card.title}</p>
+          </div>
+        ))}
+        {column.cards.length > 2 && (
+          <p className="text-xs text-white/40 text-center">+{column.cards.length - 2} mais</p>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 export function KanbanBoard({
   columns,
   onColumnsChange,
@@ -188,6 +327,7 @@ export function KanbanBoard({
   onDeleteCard,
 }: KanbanBoardProps) {
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
+  const [activeColumn, setActiveColumn] = useState<KanbanColumn | null>(null);
   const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
   const [overColumnId, setOverColumnId] = useState<string | null>(null);
   const [showAddColumn, setShowAddColumn] = useState(false);
@@ -196,18 +336,21 @@ export function KanbanBoard({
   const [addingCardToColumn, setAddingCardToColumn] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardPriority, setNewCardPriority] = useState<Priority>('media');
+  const [openMenuColumnId, setOpenMenuColumnId] = useState<string | null>(null);
+  const [renamingColumnId, setRenamingColumnId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const lastOverIdRef = useRef<UniqueIdentifier | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5,
+        distance: 3,
       },
     }),
     useSensor(TouchSensor, {
       activationConstraint: {
-        delay: 100,
-        tolerance: 8,
+        delay: 50,
+        tolerance: 5,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -225,6 +368,10 @@ export function KanbanBoard({
   }, [columns]);
 
   const collisionDetectionStrategy: CollisionDetection = useCallback((args) => {
+    if (activeColumn) {
+      return closestCenter(args);
+    }
+
     const pointerCollisions = pointerWithin(args);
     
     if (pointerCollisions.length > 0) {
@@ -261,7 +408,7 @@ export function KanbanBoard({
     }
 
     return [];
-  }, [columns]);
+  }, [columns, activeColumn]);
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
@@ -270,12 +417,18 @@ export function KanbanBoard({
     if (activeData?.type === 'card') {
       setActiveCard(activeData.card);
       setActiveColumnId(activeData.columnId);
+    } else if (activeData?.type === 'sortable-column') {
+      setActiveColumn(activeData.column);
     }
   };
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over || !activeCard) return;
+    if (!over) return;
+
+    if (activeColumn) return;
+
+    if (!activeCard) return;
 
     const activeData = active.data.current;
     const overData = over.data.current;
@@ -346,8 +499,24 @@ export function KanbanBoard({
     onColumnsChange(newColumns);
   };
 
-  const handleDragEnd = () => {
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (activeColumn && over) {
+      const activeId = active.id as string;
+      const overId = over.id as string;
+
+      const oldIndex = columns.findIndex(c => `column-${c.id}` === activeId);
+      const newIndex = columns.findIndex(c => `column-${c.id}` === overId);
+
+      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+        const newColumns = arrayMove(columns, oldIndex, newIndex);
+        onColumnsChange(newColumns);
+      }
+    }
+
     setActiveCard(null);
+    setActiveColumn(null);
     setActiveColumnId(null);
     setOverColumnId(null);
     lastOverIdRef.current = null;
@@ -376,6 +545,27 @@ export function KanbanBoard({
     }
   };
 
+  const handleRenameColumn = (columnId: string) => {
+    const column = columns.find(c => c.id === columnId);
+    if (column) {
+      setRenamingColumnId(columnId);
+      setRenameValue(column.title);
+    }
+  };
+
+  const handleSaveRename = () => {
+    if (renamingColumnId && renameValue.trim()) {
+      const newColumns = columns.map(c =>
+        c.id === renamingColumnId ? { ...c, title: renameValue.trim().toUpperCase() } : c
+      );
+      onColumnsChange(newColumns);
+    }
+    setRenamingColumnId(null);
+    setRenameValue('');
+  };
+
+  const columnIds = columns.map(c => `column-${c.id}`);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -394,149 +584,176 @@ export function KanbanBoard({
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4 h-[calc(100%-4rem)]">
-          {columns.map((column) => (
-            <div
-              key={column.id}
-              className="flex-shrink-0 w-72 bg-[#010516]/50 rounded-xl border border-white/5 p-3 flex flex-col max-h-full"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-white/60 tracking-wider">{column.title}</h3>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-white/30">{column.cards.length}</span>
-                  <button
-                    onClick={() => onDeleteColumn(column.id)}
-                    className="p-1 rounded hover:bg-white/10 transition-colors"
+        <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
+          <div className="flex gap-4 overflow-x-auto pb-4 h-[calc(100%-4rem)]">
+            {columns.map((column) => (
+              <SortableColumn
+                key={column.id}
+                column={column}
+                onOpenMenu={() => setOpenMenuColumnId(column.id)}
+                isDraggingColumn={activeColumn !== null}
+              >
+                <div className="relative">
+                  <AnimatePresence>
+                    {openMenuColumnId === column.id && (
+                      <ColumnMenu
+                        column={column}
+                        onRename={() => handleRenameColumn(column.id)}
+                        onDelete={() => onDeleteColumn(column.id)}
+                        onClose={() => setOpenMenuColumnId(null)}
+                      />
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {renamingColumnId === column.id ? (
+                  <div className="mb-3 flex gap-2">
+                    <input
+                      type="text"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      className="flex-1 px-2 py-1 rounded-lg bg-white/5 border border-[#00f6ff]/30 focus:border-[#00f6ff]/50 outline-none text-white text-xs"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRename();
+                        if (e.key === 'Escape') { setRenamingColumnId(null); setRenameValue(''); }
+                      }}
+                    />
+                    <button
+                      onClick={handleSaveRename}
+                      className="p-1 rounded-lg bg-[#00f6ff]/20 text-[#00f6ff] hover:bg-[#00f6ff]/30 transition-colors"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : null}
+
+                <DroppableColumn 
+                  column={column} 
+                  isOver={overColumnId === column.id && activeCard !== null}
+                >
+                  <SortableContext
+                    items={column.cards.map(c => c.id)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    <MoreVertical className="w-4 h-4 text-white/40" />
+                    <AnimatePresence>
+                      {column.cards.map((card) => (
+                        <SortableCard
+                          key={card.id}
+                          card={card}
+                          columnId={column.id}
+                          onEdit={() => setEditingCard({ card, columnId: column.id })}
+                          onDelete={() => onDeleteCard(column.id, card.id)}
+                          isDraggingAny={activeCard !== null}
+                        />
+                      ))}
+                    </AnimatePresence>
+                  </SortableContext>
+                  
+                  {column.cards.length === 0 && !activeCard && (
+                    <div className="flex items-center justify-center h-20 text-white/20 text-xs">
+                      Sem tarefas
+                    </div>
+                  )}
+                </DroppableColumn>
+
+                {addingCardToColumn === column.id ? (
+                  <div className="mt-3 space-y-2">
+                    <input
+                      type="text"
+                      value={newCardTitle}
+                      onChange={(e) => setNewCardTitle(e.target.value)}
+                      placeholder="Título da tarefa..."
+                      className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm"
+                      autoFocus
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddCard(column.id)}
+                    />
+                    <select
+                      value={newCardPriority}
+                      onChange={(e) => setNewCardPriority(e.target.value as Priority)}
+                      className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm"
+                    >
+                      <option value="alta">Alta Prioridade</option>
+                      <option value="media">Média Prioridade</option>
+                      <option value="baixa">Baixa Prioridade</option>
+                    </select>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleAddCard(column.id)}
+                        className="flex-1 py-2 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-medium hover:bg-[#00f6ff]/90 transition-colors"
+                      >
+                        Adicionar
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAddingCardToColumn(null);
+                          setNewCardTitle('');
+                        }}
+                        className="px-3 py-2 rounded-xl bg-white/5 text-white/60 text-sm hover:bg-white/10 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setAddingCardToColumn(column.id)}
+                    className="mt-3 flex items-center gap-2 w-full px-3 py-2 rounded-xl border border-dashed border-[#00f6ff]/30 text-[#00f6ff] text-sm hover:bg-[#00f6ff]/5 transition-colors justify-center"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar um card
+                  </button>
+                )}
+              </SortableColumn>
+            ))}
+
+            {showAddColumn ? (
+              <div className="flex-shrink-0 w-72 bg-[#010516]/50 rounded-xl border border-white/5 p-3">
+                <input
+                  type="text"
+                  value={newColumnTitle}
+                  onChange={(e) => setNewColumnTitle(e.target.value)}
+                  placeholder="Nome da coluna..."
+                  className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm mb-3"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddColumn()}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddColumn}
+                    className="flex-1 py-2 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-medium hover:bg-[#00f6ff]/90 transition-colors"
+                  >
+                    Criar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddColumn(false);
+                      setNewColumnTitle('');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-white/5 text-white/60 text-sm hover:bg-white/10 transition-colors"
+                  >
+                    Cancelar
                   </button>
                 </div>
               </div>
-
-              <DroppableColumn 
-                column={column} 
-                isOver={overColumnId === column.id && activeCard !== null}
+            ) : (
+              <button
+                onClick={() => setShowAddColumn(true)}
+                className="flex-shrink-0 w-72 h-12 flex items-center justify-center gap-2 rounded-xl border border-dashed border-[#00f6ff]/30 text-[#00f6ff] text-sm hover:bg-[#00f6ff]/5 transition-colors"
               >
-                <SortableContext
-                  items={column.cards.map(c => c.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <AnimatePresence>
-                    {column.cards.map((card) => (
-                      <SortableCard
-                        key={card.id}
-                        card={card}
-                        columnId={column.id}
-                        onEdit={() => setEditingCard({ card, columnId: column.id })}
-                        onDelete={() => onDeleteCard(column.id, card.id)}
-                        isDraggingAny={activeCard !== null}
-                      />
-                    ))}
-                  </AnimatePresence>
-                </SortableContext>
-                
-                {column.cards.length === 0 && !activeCard && (
-                  <div className="flex items-center justify-center h-20 text-white/20 text-xs">
-                    Sem tarefas
-                  </div>
-                )}
-              </DroppableColumn>
-
-              {addingCardToColumn === column.id ? (
-                <div className="mt-3 space-y-2">
-                  <input
-                    type="text"
-                    value={newCardTitle}
-                    onChange={(e) => setNewCardTitle(e.target.value)}
-                    placeholder="Título da tarefa..."
-                    className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm"
-                    autoFocus
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddCard(column.id)}
-                  />
-                  <select
-                    value={newCardPriority}
-                    onChange={(e) => setNewCardPriority(e.target.value as Priority)}
-                    className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm"
-                  >
-                    <option value="alta">Alta Prioridade</option>
-                    <option value="media">Média Prioridade</option>
-                    <option value="baixa">Baixa Prioridade</option>
-                  </select>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleAddCard(column.id)}
-                      className="flex-1 py-2 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-medium hover:bg-[#00f6ff]/90 transition-colors"
-                    >
-                      Adicionar
-                    </button>
-                    <button
-                      onClick={() => {
-                        setAddingCardToColumn(null);
-                        setNewCardTitle('');
-                      }}
-                      className="px-3 py-2 rounded-xl bg-white/5 text-white/60 text-sm hover:bg-white/10 transition-colors"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setAddingCardToColumn(column.id)}
-                  className="mt-3 flex items-center gap-2 w-full px-3 py-2 rounded-xl border border-dashed border-[#00f6ff]/30 text-[#00f6ff] text-sm hover:bg-[#00f6ff]/5 transition-colors justify-center"
-                >
-                  <Plus className="w-4 h-4" />
-                  Adicionar um card
-                </button>
-              )}
-            </div>
-          ))}
-
-          {showAddColumn ? (
-            <div className="flex-shrink-0 w-72 bg-[#010516]/50 rounded-xl border border-white/5 p-3">
-              <input
-                type="text"
-                value={newColumnTitle}
-                onChange={(e) => setNewColumnTitle(e.target.value)}
-                placeholder="Nome da coluna..."
-                className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm mb-3"
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleAddColumn()}
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={handleAddColumn}
-                  className="flex-1 py-2 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-medium hover:bg-[#00f6ff]/90 transition-colors"
-                >
-                  Criar
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAddColumn(false);
-                    setNewColumnTitle('');
-                  }}
-                  className="px-3 py-2 rounded-xl bg-white/5 text-white/60 text-sm hover:bg-white/10 transition-colors"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowAddColumn(true)}
-              className="flex-shrink-0 w-72 h-12 flex items-center justify-center gap-2 rounded-xl border border-dashed border-[#00f6ff]/30 text-[#00f6ff] text-sm hover:bg-[#00f6ff]/5 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Adicionar coluna
-            </button>
-          )}
-        </div>
+                <Plus className="w-4 h-4" />
+                Adicionar coluna
+              </button>
+            )}
+          </div>
+        </SortableContext>
 
         <DragOverlay dropAnimation={{
           duration: 200,
           easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
         }}>
           {activeCard && <CardOverlay card={activeCard} />}
+          {activeColumn && <ColumnOverlay column={activeColumn} />}
         </DragOverlay>
       </DndContext>
 

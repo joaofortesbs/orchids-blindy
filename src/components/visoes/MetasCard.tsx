@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Target, Edit3 } from 'lucide-react';
+import { Target } from 'lucide-react';
 import { MainGoal } from '@/lib/types/visoes';
 
 interface MetasCardProps {
@@ -15,11 +15,24 @@ export function MetasCard({ mainGoal, onSetGoal, onOpenMetas }: MetasCardProps) 
   const [isEditing, setIsEditing] = useState(false);
   const [goalText, setGoalText] = useState(mainGoal?.text || '');
 
+  useEffect(() => {
+    if (mainGoal?.text) {
+      setGoalText(mainGoal.text);
+    }
+  }, [mainGoal?.text]);
+
   const handleSave = () => {
     if (goalText.trim()) {
       onSetGoal(goalText.trim(), new Date().getFullYear());
       setIsEditing(false);
+    } else {
+      setIsEditing(false);
     }
+  };
+
+  const handleStartEditing = () => {
+    setGoalText(mainGoal?.text || '');
+    setIsEditing(true);
   };
 
   return (
@@ -50,47 +63,52 @@ export function MetasCard({ mainGoal, onSetGoal, onOpenMetas }: MetasCardProps) 
       </div>
 
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-4">
-        <span className="text-[#00f6ff] text-6xl font-serif leading-none mb-2">"</span>
-        
-        {mainGoal ? (
-          isEditing ? (
+        {isEditing ? (
+          <div className="w-full">
             <textarea
               value={goalText}
               onChange={(e) => setGoalText(e.target.value)}
               onBlur={handleSave}
-              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSave()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSave();
+                }
+                if (e.key === 'Escape') {
+                  setIsEditing(false);
+                  setGoalText(mainGoal?.text || '');
+                }
+              }}
               placeholder="Escreva seu objetivo principal..."
-              className="w-full text-center text-xl font-medium text-white bg-transparent border-b border-[#00f6ff]/20 focus:border-[#00f6ff]/50 outline-none resize-none italic"
+              className="w-full text-center text-xl font-medium text-white bg-transparent border-b-2 border-[#00f6ff]/50 focus:border-[#00f6ff] outline-none resize-none italic py-2"
               rows={3}
               autoFocus
             />
-          ) : (
-            <p 
-              className="text-xl font-medium text-white italic cursor-pointer hover:text-white/80 transition-colors group flex items-center gap-2"
-              onClick={() => {
-                setGoalText(mainGoal.text);
-                setIsEditing(true);
-              }}
-            >
-              {mainGoal.text}
-              <Edit3 className="w-4 h-4 opacity-0 group-hover:opacity-50 transition-opacity" />
-            </p>
-          )
+            <p className="text-white/30 text-xs mt-2">Pressione Enter para salvar ou Esc para cancelar</p>
+          </div>
         ) : (
-          <div className="text-center">
-            <p className="text-white/40 text-lg italic mb-2">Defina seu objetivo principal</p>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setIsEditing(true)}
-              className="text-[#00f6ff] text-sm hover:underline"
-            >
-              Clique para adicionar
-            </motion.button>
+          <div 
+            className="flex items-start gap-2 cursor-pointer group w-full"
+            onClick={handleStartEditing}
+          >
+            <span className="text-[#00f6ff] text-5xl font-serif leading-none flex-shrink-0">"</span>
+            
+            <div className="flex-1 flex items-center justify-center min-h-[80px]">
+              {mainGoal?.text ? (
+                <p className="text-xl font-medium text-white italic group-hover:text-white/80 transition-colors">
+                  {mainGoal.text}
+                </p>
+              ) : (
+                <div className="text-center">
+                  <p className="text-white/40 text-lg italic mb-1">Defina seu objetivo principal</p>
+                  <span className="text-[#00f6ff] text-sm hover:underline">Clique para adicionar</span>
+                </div>
+              )}
+            </div>
+            
+            <span className="text-[#00f6ff] text-5xl font-serif leading-none flex-shrink-0">"</span>
           </div>
         )}
-        
-        <span className="text-[#00f6ff] text-6xl font-serif leading-none mt-2 self-end">"</span>
       </div>
 
       <div className="relative z-10 flex justify-end mt-4">

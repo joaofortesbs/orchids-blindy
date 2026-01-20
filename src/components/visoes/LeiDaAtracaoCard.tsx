@@ -1,14 +1,32 @@
 "use client";
 
-import { useRef } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, X, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { Plus, X, Image as ImageIcon, Sparkles, Loader2, GripVertical } from 'lucide-react';
 import { VisionBoard } from '@/lib/types/visoes';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface LeiDaAtracaoCardProps {
   images: VisionBoard[];
   onAddImage: (imageUrl: string) => void;
   onRemoveImage: (id: string) => void;
+  onReorderImages?: (images: VisionBoard[]) => void;
   onReset: () => void;
   onOpenFullscreen: () => void;
 }
@@ -17,23 +35,50 @@ export function LeiDaAtracaoCard({
   images,
   onAddImage,
   onRemoveImage,
+  onReorderImages,
   onReset,
   onOpenFullscreen,
 }: LeiDaAtracaoCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    if (images.length <= 1) {
+      setCurrentIndex(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % images.length);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [images.length]);
+
+  useEffect(() => {
+    if (currentIndex >= images.length && images.length > 0) {
+      setCurrentIndex(0);
+    }
+  }, [images.length, currentIndex]);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setIsUploading(true);
       const reader = new FileReader();
       reader.onloadend = () => {
         onAddImage(reader.result as string);
+        setIsUploading(false);
       };
       reader.readAsDataURL(file);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
-  const featuredImage = images[0];
+  const currentImage = images[currentIndex];
 
   return (
     <motion.div
@@ -49,14 +94,65 @@ export function LeiDaAtracaoCard({
       />
 
       <div className="relative flex-1 min-h-[280px]">
-        {featuredImage ? (
-          <div className="absolute inset-0">
-            <img
-              src={featuredImage.imageUrl}
-              alt="Vision Board"
-              className="w-full h-full object-cover"
-            />
+        {currentImage ? (
+          <div className="absolute inset-0 group">
+            <AnimatePresence mode="wait">
+              <motion.img
+                key={currentImage.id}
+                src={currentImage.imageUrl}
+                alt="Vision Board"
+                className="w-full h-full object-cover"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.5 }}
+              />
+            </AnimatePresence>
             <div className="absolute inset-0 bg-gradient-to-t from-[#0a0f1f] via-transparent to-transparent" />
+            
+            <motion.button
+              initial={{ opacity: 0 }}
+              whileHover={{ scale: 1.1 }}
+              onClick={(e) => { e.stopPropagation(); onRemoveImage(currentImage.id); }}
+              className="absolute top-3 right-3 p-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white/80 hover:bg-red-500 hover:text-white transition-all opacity-0 group-hover:opacity-100 z-20"
+            >
+              <X className="w-4 h-4" />
+            </motion.button>
+
+            {images.length > 1 && (
+              <>
+                <div className="absolute bottom-16 left-3 right-3 flex gap-1 overflow-hidden">
+                  {images.slice(0, 5).map((img, idx) => (
+                    <button
+                      key={img.id}
+                      onClick={() => setCurrentIndex(idx)}
+                      className={`relative w-12 h-12 rounded-lg overflow-hidden border transition-all ${
+                        idx === currentIndex ? 'border-[#00f6ff] ring-1 ring-[#00f6ff]' : 'border-white/20'
+                      }`}
+                    >
+                      <img src={img.imageUrl} alt="" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                  {images.length > 5 && (
+                    <div className="w-12 h-12 rounded-lg bg-black/50 flex items-center justify-center border border-white/20">
+                      <span className="text-white/80 text-xs font-medium">+{images.length - 5}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="absolute bottom-[72px] left-1/2 -translate-x-1/2 flex gap-1.5">
+                  {images.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setCurrentIndex(idx)}
+                      className={`w-2 h-2 rounded-full transition-all ${
+                        idx === currentIndex ? 'bg-[#00f6ff] w-4' : 'bg-white/30 hover:bg-white/50'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -108,10 +204,80 @@ export function LeiDaAtracaoCard({
   );
 }
 
+function SortableImage({
+  image,
+  index,
+  onRemove,
+}: {
+  image: VisionBoard;
+  index: number;
+  onRemove: (id: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: image.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : 1,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`relative aspect-[4/3] rounded-xl overflow-hidden group border transition-all ${
+        isDragging ? 'border-[#00f6ff] shadow-xl shadow-[#00f6ff]/20' : 'border-white/10 hover:border-[#00f6ff]/30'
+      }`}
+    >
+      <img
+        src={image.imageUrl}
+        alt={`Vision ${index + 1}`}
+        className="w-full h-full object-cover pointer-events-none"
+        draggable={false}
+      />
+      
+      <div className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/70 backdrop-blur-sm border border-white/30 flex items-center justify-center z-10">
+        <span className="text-white text-xs font-bold">{index + 1}</span>
+      </div>
+      
+      <div
+        {...attributes}
+        {...listeners}
+        className="absolute top-2 left-1/2 -translate-x-1/2 p-1.5 rounded-lg bg-black/70 backdrop-blur-sm text-white/60 hover:text-white cursor-grab active:cursor-grabbing transition-all opacity-0 group-hover:opacity-100 z-10"
+      >
+        <GripVertical className="w-4 h-4" />
+      </div>
+      
+      <motion.button
+        whileHover={{ scale: 1.1 }}
+        onClick={(e) => { e.stopPropagation(); onRemove(image.id); }}
+        className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 backdrop-blur-sm text-white/80 hover:bg-red-500 hover:text-white transition-all opacity-0 group-hover:opacity-100 z-10"
+      >
+        <X className="w-4 h-4" />
+      </motion.button>
+
+      {image.id.startsWith('temp-') && (
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-[#00f6ff] animate-spin" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface VisionBoardFullscreenProps {
   images: VisionBoard[];
   onAddImage: (imageUrl: string) => void;
   onRemoveImage: (id: string) => void;
+  onReorderImages?: (images: VisionBoard[]) => void;
   onReset: () => void;
   onClose: () => void;
 }
@@ -120,21 +286,61 @@ export function VisionBoardFullscreen({
   images,
   onAddImage,
   onRemoveImage,
+  onReorderImages,
   onReset,
   onClose,
 }: VisionBoardFullscreenProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        onAddImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      setIsUploading(true);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        await new Promise<void>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            onAddImage(reader.result as string);
+            resolve();
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = images.findIndex((img) => img.id === active.id);
+      const newIndex = images.findIndex((img) => img.id === over.id);
+      
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const newOrder = arrayMove(images, oldIndex, newIndex);
+        if (onReorderImages) {
+          onReorderImages(newOrder);
+        }
+      }
+    }
+  }, [images, onReorderImages]);
 
   return (
     <motion.div
@@ -155,6 +361,7 @@ export function VisionBoardFullscreen({
           <div className="flex items-center gap-3">
             <Sparkles className="w-6 h-6 text-[#00f6ff]" />
             <h1 className="text-2xl font-bold text-white">Vision Board</h1>
+            <span className="text-white/40 text-sm ml-2">({images.length} {images.length === 1 ? 'imagem' : 'imagens'})</span>
           </div>
           <motion.button
             whileHover={{ scale: 1.1 }}
@@ -169,7 +376,11 @@ export function VisionBoardFullscreen({
         {images.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-[60vh]">
             <div className="w-24 h-24 rounded-full bg-[#00f6ff]/10 flex items-center justify-center mb-6">
-              <ImageIcon className="w-12 h-12 text-[#00f6ff]/40" />
+              {isUploading ? (
+                <Loader2 className="w-12 h-12 text-[#00f6ff] animate-spin" />
+              ) : (
+                <ImageIcon className="w-12 h-12 text-[#00f6ff]/40" />
+              )}
             </div>
             <h2 className="text-xl font-semibold text-white mb-2">Seu Vision Board está vazio</h2>
             <p className="text-white/50 text-center max-w-md mb-6">
@@ -179,50 +390,58 @@ export function VisionBoardFullscreen({
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#00f6ff] text-[#010516] font-semibold"
+              disabled={isUploading}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#00f6ff] text-[#010516] font-semibold disabled:opacity-50"
               style={{ boxShadow: '0 0 30px rgba(0, 246, 255, 0.3)' }}
             >
-              <Plus className="w-5 h-5" />
+              {isUploading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Plus className="w-5 h-5" />
+              )}
               Adicionar Primeira Imagem
             </motion.button>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
-              {images.map((image, index) => (
-                <motion.div
-                  key={image.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: index * 0.05 }}
-                  className="relative aspect-[4/3] rounded-xl overflow-hidden group border border-white/10 hover:border-[#00f6ff]/30 transition-colors"
-                >
-                  <img
-                    src={image.imageUrl}
-                    alt={`Vision ${index + 1}`}
-                    className="w-full h-full object-cover"
-                  />
-                  <motion.button
-                    initial={{ opacity: 0 }}
-                    whileHover={{ opacity: 1 }}
-                    onClick={() => onRemoveImage(image.id)}
-                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white/80 hover:bg-red-500/80 transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <X className="w-4 h-4" />
-                  </motion.button>
-                </motion.div>
-              ))}
-            </div>
+            <p className="text-white/40 text-sm mb-4">Arraste pelo ícone no topo das imagens para reorganizar a ordem</p>
+            
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={images.map(img => img.id)}
+                strategy={rectSortingStrategy}
+              >
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
+                  {images.map((image, index) => (
+                    <SortableImage
+                      key={image.id}
+                      image={image}
+                      index={index}
+                      onRemove={onRemoveImage}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
 
             <div className="flex items-center gap-3">
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-semibold"
+                disabled={isUploading}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-semibold disabled:opacity-50"
                 style={{ boxShadow: '0 0 20px rgba(0, 246, 255, 0.3)' }}
               >
-                <Plus className="w-4 h-4" />
+                {isUploading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Plus className="w-4 h-4" />
+                )}
                 Adicionar Imagem
               </motion.button>
 
@@ -245,6 +464,7 @@ export function VisionBoardFullscreen({
           ref={fileInputRef}
           onChange={handleFileSelect}
           accept="image/*"
+          multiple
           className="hidden"
         />
       </div>

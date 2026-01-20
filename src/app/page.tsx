@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sidebar } from '@/components/blindados/Sidebar';
 import { PomodoroTimer } from '@/components/blindados/PomodoroTimer';
@@ -17,6 +17,14 @@ import { downloadCSV } from '@/lib/utils/storage';
 import { format } from 'date-fns';
 
 type Section = 'flows' | 'visoes';
+
+const SECTION_STORAGE_KEY = 'blindy_active_section_v1';
+const SIDEBAR_STORAGE_KEY = 'blindy_sidebar_collapsed_v1';
+
+function safeStorage() {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage; } catch { return null; }
+}
 
 function MainApp() {
   const {
@@ -35,10 +43,66 @@ function MainApp() {
 
   useAutoFix();
 
-  const [activeSection, setActiveSection] = useState<Section>('flows');
-  const [collapsed, setCollapsed] = useState(false);
+  const [activeSection, setActiveSection] = useState<Section>(() => {
+    const storage = safeStorage();
+    if (storage) {
+      const saved = storage.getItem(SECTION_STORAGE_KEY);
+      if (saved === 'flows' || saved === 'visoes') return saved;
+    }
+    return 'flows';
+  });
+  
+  const [collapsed, setCollapsed] = useState(() => {
+    const storage = safeStorage();
+    if (storage) {
+      return storage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
+    }
+    return false;
+  });
+  
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const { user, isLoading: authLoading, signOut } = useAuth();
+
+  const mountedRef = useRef(true);
+  const transitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const storage = safeStorage();
+    if (storage) {
+      storage.setItem(SECTION_STORAGE_KEY, activeSection);
+    }
+  }, [activeSection]);
+
+  useEffect(() => {
+    const storage = safeStorage();
+    if (storage) {
+      storage.setItem(SIDEBAR_STORAGE_KEY, String(collapsed));
+    }
+  }, [collapsed]);
+
+  const handleSectionChange = useCallback((section: Section) => {
+    if (section === activeSection || isTransitioning) return;
+    
+    setIsTransitioning(true);
+    setActiveSection(section);
+    
+    transitionTimeoutRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        setIsTransitioning(false);
+      }
+    }, 300);
+  }, [activeSection, isTransitioning]);
 
   const handleSessionComplete = useCallback((categoryId: string, duration: number) => {
     setLiveSession(null);
@@ -58,11 +122,26 @@ function MainApp() {
     downloadCSV(data);
   }, [data]);
 
+  const safeSettings = useMemo(() => ({
+    categories: data.pomodoro?.settings?.categories || [],
+    intervals: {
+      shortBreak: data.pomodoro?.settings?.intervals?.shortBreak ?? 5,
+      longBreak: data.pomodoro?.settings?.intervals?.longBreak ?? 15,
+      cyclesUntilLongBreak: data.pomodoro?.settings?.intervals?.cyclesUntilLongBreak ?? 4,
+    },
+  }), [data.pomodoro?.settings]);
+
+  const safeSessions = useMemo(() => data.pomodoro?.sessions || [], [data.pomodoro?.sessions]);
+  const safeCategories = useMemo(() => data.pomodoro?.settings?.categories || [], [data.pomodoro?.settings?.categories]);
+  const safeColumns = useMemo(() => data.kanban?.columns || [], [data.kanban?.columns]);
+
   if (!authLoading && !user) {
     return <AuthPage onAuthSuccess={() => {}} />;
   }
 
-  if (!isLoaded && !data.pomodoro?.settings?.intervals) {
+  const showLoading = !isLoaded && safeCategories.length === 0;
+
+  if (showLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#010516]">
         <motion.div
@@ -82,7 +161,7 @@ function MainApp() {
       <Sidebar 
         onExport={handleExport} 
         activeSection={activeSection}
-        onSectionChange={setActiveSection}
+        onSectionChange={handleSectionChange}
         collapsed={collapsed}
         onCollapsedChange={setCollapsed}
         onSignOut={signOut}
@@ -90,33 +169,33 @@ function MainApp() {
       />
 
       <main className="flex-1 h-screen overflow-hidden">
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait" initial={false}>
           {activeSection === 'flows' ? (
             <motion.div
               key="flows"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
               className="h-full p-6 flex flex-col gap-6"
             >
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" style={{ height: '45%', minHeight: '360px' }}>
                 <PomodoroTimer
-                  settings={data.pomodoro.settings}
+                  settings={safeSettings}
                   onSettingsChange={updatePomodoroSettings}
                   onSessionComplete={handleSessionComplete}
                   onLiveSessionUpdate={handleLiveSessionUpdate}
                 />
                 <TimeChart
-                  sessions={data.pomodoro.sessions}
-                  categories={data.pomodoro.settings.categories}
+                  sessions={safeSessions}
+                  categories={safeCategories}
                   liveSession={liveSession}
                 />
               </div>
 
               <div className="flex-1 min-h-0" style={{ height: '55%' }}>
                 <KanbanBoard
-                  columns={data.kanban.columns}
+                  columns={safeColumns}
                   onColumnsChange={updateKanbanColumns}
                   onAddColumn={addKanbanColumn}
                   onDeleteColumn={deleteKanbanColumn}
@@ -130,10 +209,10 @@ function MainApp() {
           ) : (
             <motion.div
               key="visoes"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
               className="h-full"
             >
               <VisoesDashboard />

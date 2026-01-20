@@ -22,6 +22,7 @@ export function VisoesDashboard() {
     isLoaded,
     addVisionImage,
     removeVisionImage,
+    reorderVisionImages,
     resetVisionBoard,
     setMainGoal,
     addGoalAction,
@@ -78,15 +79,16 @@ export function VisoesDashboard() {
           />
 
             <div className="relative z-10 grid grid-cols-3 gap-6">
-              <div className="h-[380px]">
-                <LeiDaAtracaoCard
-                  images={data.visionBoard}
-                  onAddImage={addVisionImage}
-                  onRemoveImage={removeVisionImage}
-                  onReset={resetVisionBoard}
-                  onOpenFullscreen={() => setActivePage('visionboard')}
-                />
-              </div>
+            <div className="h-[380px]">
+              <LeiDaAtracaoCard
+                images={data.visionBoard}
+                onAddImage={addVisionImage}
+                onRemoveImage={removeVisionImage}
+                onReorderImages={reorderVisionImages}
+                onReset={resetVisionBoard}
+                onOpenFullscreen={() => setActivePage('visionboard')}
+              />
+            </div>
 
               <div className="h-[380px]">
                 <MetasCard
@@ -136,14 +138,15 @@ export function VisoesDashboard() {
 
       <AnimatePresence>
         {activePage === 'visionboard' && (
-          <VisionBoardFullscreen
-            images={data.visionBoard}
-            onAddImage={addVisionImage}
-            onRemoveImage={removeVisionImage}
-            onReset={resetVisionBoard}
-            onClose={() => setActivePage('dashboard')}
-          />
-        )}
+            <VisionBoardFullscreen
+              images={data.visionBoard}
+              onAddImage={addVisionImage}
+              onRemoveImage={removeVisionImage}
+              onReorderImages={reorderVisionImages}
+              onReset={resetVisionBoard}
+              onClose={() => setActivePage('dashboard')}
+            />
+          )}
 
         {activePage === 'metas' && (
           <MetasPage

@@ -2,6 +2,7 @@ export interface VisionBoard {
   id: string;
   imageUrl: string;
   createdAt: string;
+  position: number;
 }
 
 export interface MainGoal {

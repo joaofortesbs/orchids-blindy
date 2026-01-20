@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, Legend } from 'recharts';
 import { BarChart3, TrendingUp, Zap, Pause } from 'lucide-react';
 import { PomodoroSession, PomodoroCategory, ChartViewType, ChartPeriod } from '@/lib/types/blindados';
 import { LiveSession } from '@/hooks/useTimerPersistence';
@@ -19,11 +19,12 @@ interface TimeChartProps {
 export function TimeChart({ sessions, categories, liveSession: propLiveSession }: TimeChartProps) {
   const [chartType, setChartType] = useState<ChartViewType>('bar');
   const [period, setPeriod] = useState<ChartPeriod>('daily');
-  const [selectedCategories, setSelectedCategories] = useState<string[]>(categories.map(c => c.id));
+  const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
   const [isAnimationEnabled, setIsAnimationEnabled] = useState(true);
   const previousChartTypeRef = useRef<ChartViewType>(chartType);
   const [syncedSession, setSyncedSession] = useState<LiveSessionEvent | null>(null);
   const [forceUpdate, setForceUpdate] = useState(0);
+  const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!timerSyncManager) return;
@@ -32,19 +33,21 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
       setSyncedSession(session);
     });
 
-    const intervalId = setInterval(() => {
+    updateIntervalRef.current = setInterval(() => {
       if (timerSyncManager) {
         const active = timerSyncManager.getActiveSession();
         if (active) {
           setSyncedSession(active);
-          setForceUpdate(prev => prev + 1);
         }
       }
-    }, 1000);
+      setForceUpdate(prev => prev + 1);
+    }, 500);
 
     return () => {
       unsubscribe();
-      clearInterval(intervalId);
+      if (updateIntervalRef.current) {
+        clearInterval(updateIntervalRef.current);
+      }
     };
   }, []);
 
@@ -130,11 +133,6 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
       const isCurrentPeriod = idx === dateRange.length - 1;
 
       categories.forEach((cat) => {
-        if (!selectedCategories.includes(cat.id)) {
-          dataPoint[cat.id] = 0;
-          return;
-        }
-
         const filteredSessions = sessions.filter((session) => {
           const sessionDate = parseISO(session.date);
           let interval: { start: Date; end: Date };
@@ -168,15 +166,24 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
 
       return dataPoint;
     });
-  }, [sessions, categories, period, selectedCategories, effectiveLiveSession, forceUpdate]);
+  }, [sessions, categories, period, effectiveLiveSession, forceUpdate]);
 
-  const toggleCategory = (categoryId: string) => {
-    setSelectedCategories(prev => 
-      prev.includes(categoryId)
-        ? prev.filter(id => id !== categoryId)
-        : [...prev, categoryId]
-    );
-  };
+  const toggleCategory = useCallback((categoryId: string) => {
+    setHiddenCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(categoryId)) {
+        newSet.delete(categoryId);
+      } else {
+        newSet.add(categoryId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const visibleCategories = useMemo(() => 
+    categories.filter(c => !hiddenCategories.has(c.id)),
+    [categories, hiddenCategories]
+  );
 
   const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) => {
     if (!active || !payload) return null;
@@ -227,6 +234,41 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
     return `${mins}m ${secs}s`;
   };
 
+  const CustomLegend = () => (
+    <div className="flex items-center gap-3 flex-wrap">
+      {categories.map((cat) => {
+        const isHidden = hiddenCategories.has(cat.id);
+        const isLive = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isRunning;
+        const isPaused = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused;
+        
+        return (
+          <button
+            key={cat.id}
+            onClick={() => toggleCategory(cat.id)}
+            className={`flex items-center gap-2 px-2 py-1 rounded-lg transition-all ${
+              isHidden ? 'opacity-30 hover:opacity-50' : 'opacity-100'
+            }`}
+          >
+            <div 
+              className={`w-3 h-3 rounded-full transition-all ${isLive ? 'animate-pulse ring-2 ring-offset-1 ring-offset-[#0a0f1f]' : ''}`}
+              style={{ 
+                backgroundColor: cat.color,
+                ringColor: isLive ? cat.color : 'transparent',
+              }}
+            />
+            <span className={`text-xs text-white ${isHidden ? 'line-through' : ''}`}>{cat.name}</span>
+            {isLive && (
+              <Zap className="w-3 h-3 text-[#00f6ff] animate-pulse" />
+            )}
+            {isPaused && (
+              <Pause className="w-3 h-3 text-amber-400" />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -243,33 +285,7 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
 
         <div className="relative z-10 h-full flex flex-col">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              {categories.map((cat) => {
-                const isLive = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isRunning;
-                const isPaused = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused;
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => toggleCategory(cat.id)}
-                    className={`flex items-center gap-2 px-2 py-1 rounded-lg transition-all ${
-                      selectedCategories.includes(cat.id) ? 'opacity-100' : 'opacity-40'
-                    }`}
-                  >
-                    <div 
-                      className={`w-3 h-3 rounded-full ${isLive ? 'animate-pulse' : ''}`}
-                      style={{ backgroundColor: cat.color }}
-                    />
-                    <span className="text-xs text-white">{cat.name}</span>
-                    {isLive && (
-                      <Zap className="w-3 h-3 text-[#00f6ff] animate-pulse" />
-                    )}
-                    {isPaused && (
-                      <Pause className="w-3 h-3 text-amber-400" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+            <CustomLegend />
 
             <div className="flex items-center gap-3">
               {effectiveLiveSession && (
@@ -342,7 +358,7 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
                     tickFormatter={(value) => `${Math.floor(value)}m`}
                   />
                   <Tooltip content={<CustomTooltip />} />
-                  {categories.filter(c => selectedCategories.includes(c.id)).map((cat) => (
+                  {visibleCategories.map((cat) => (
                     <Bar 
                       key={cat.id}
                       dataKey={cat.id}
@@ -389,7 +405,7 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
                     tickFormatter={(value) => `${Math.floor(value)}m`}
                   />
                   <Tooltip content={<CustomTooltip />} />
-                  {categories.filter(c => selectedCategories.includes(c.id)).map((cat) => (
+                  {visibleCategories.map((cat) => (
                     <Line 
                       key={cat.id}
                       type="monotone"

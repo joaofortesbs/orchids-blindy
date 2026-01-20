@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Pause, RotateCcw, Settings, ChevronDown, Plus, X, Volume2, VolumeX } from 'lucide-react';
 import { PomodoroSettings, PomodoroCategory, DEFAULT_POMODORO_SETTINGS } from '@/lib/types/blindados';
@@ -13,14 +13,39 @@ interface PomodoroTimerProps {
   onLiveSessionUpdate?: (session: LiveSession | null) => void;
 }
 
+const CATEGORY_STORAGE_KEY = 'blindy_selected_category_v1';
+const DURATIONS_STORAGE_KEY = 'blindy_category_durations_v1';
+const SOUND_STORAGE_KEY = 'blindy_sound_enabled_v1';
+
+function safeStorage() {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage; } catch { return null; }
+}
+
 export function PomodoroTimer({ 
   settings, 
   onSettingsChange, 
   onSessionComplete,
   onLiveSessionUpdate 
 }: PomodoroTimerProps) {
-  const [selectedCategory, setSelectedCategory] = useState<PomodoroCategory>(settings.categories[0]);
+  const [selectedCategory, setSelectedCategory] = useState<PomodoroCategory>(() => {
+    const storage = safeStorage();
+    if (storage && settings.categories.length > 0) {
+      const savedId = storage.getItem(CATEGORY_STORAGE_KEY);
+      const found = settings.categories.find(c => c.id === savedId);
+      if (found) return found;
+    }
+    return settings.categories[0] || { id: 'default', name: 'Foco', color: '#00f6ff', duration: 25 };
+  });
+  
   const [categoryDurations, setCategoryDurations] = useState<Record<string, number>>(() => {
+    const storage = safeStorage();
+    if (storage) {
+      try {
+        const saved = storage.getItem(DURATIONS_STORAGE_KEY);
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
     const durations: Record<string, number> = {};
     settings.categories.forEach((cat) => {
       durations[cat.id] = cat.duration || 25;
@@ -30,28 +55,66 @@ export function PomodoroTimer({
   
   const [showSettings, setShowSettings] = useState(false);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    const storage = safeStorage();
+    if (storage) {
+      const saved = storage.getItem(SOUND_STORAGE_KEY);
+      return saved !== 'false';
+    }
+    return true;
+  });
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    const storage = safeStorage();
+    if (storage) {
+      storage.setItem(CATEGORY_STORAGE_KEY, selectedCategory.id);
+    }
+  }, [selectedCategory.id]);
+
+  useEffect(() => {
+    const storage = safeStorage();
+    if (storage) {
+      storage.setItem(DURATIONS_STORAGE_KEY, JSON.stringify(categoryDurations));
+    }
+  }, [categoryDurations]);
+
+  useEffect(() => {
+    const storage = safeStorage();
+    if (storage) {
+      storage.setItem(SOUND_STORAGE_KEY, String(soundEnabled));
+    }
+  }, [soundEnabled]);
 
   useEffect(() => {
     if (settings.categories.length > 0) {
-      const durations: Record<string, number> = {};
+      const durations: Record<string, number> = { ...categoryDurations };
       settings.categories.forEach((cat) => {
-        durations[cat.id] = cat.duration || categoryDurations[cat.id] || 25;
+        if (!durations[cat.id]) {
+          durations[cat.id] = cat.duration || 25;
+        }
       });
       setCategoryDurations(durations);
       
       const currentCatExists = settings.categories.find(c => c.id === selectedCategory.id);
       if (!currentCatExists) {
         setSelectedCategory(settings.categories[0]);
-      } else {
+      } else if (currentCatExists.name !== selectedCategory.name || currentCatExists.color !== selectedCategory.color) {
         setSelectedCategory(currentCatExists);
       }
     }
   }, [settings.categories]);
 
   const handleSessionComplete = useCallback((categoryId: string, durationMinutes: number) => {
+    if (!mountedRef.current) return;
+    
     if (soundEnabled && audioRef.current) {
       audioRef.current.play().catch(() => {});
     }
@@ -69,6 +132,8 @@ export function PomodoroTimer({
     onSessionComplete(categoryId, durationMinutes);
   }, [soundEnabled, settings.categories, onSessionComplete]);
 
+  const currentDuration = categoryDurations[selectedCategory.id] || 25;
+
   const {
     timeLeft,
     isRunning,
@@ -80,12 +145,12 @@ export function PomodoroTimer({
     progress,
   } = useTimerPersistence(
     selectedCategory.id,
-    categoryDurations[selectedCategory.id] * 60 || 1500,
+    currentDuration * 60,
     handleSessionComplete
   );
 
   useEffect(() => {
-    audioRef.current = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2telegsZlOHBqnIkBkOl5NayZxMHSqHawo98JgZGtM7ClnsvCU202bmYezMKVLnP0peGPBBbr8jLo6FaIV29w72mZ1VXvtSlf1sABm2+zoWDNgA5r9a4mnFRHDLT//');
+    audioRef.current = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2relegsZlOHBqnIkBkOl5NayZxMHSqHawo98JgZGtM7ClnsvCU202bmYezMKVLnP0peGPBBbr8jLo6FaIV29w72mZ1VXvtSlf1sABm2+zoWDNgA5r9a4mnFRHDLT//');
   }, []);
 
   useEffect(() => {
@@ -100,20 +165,20 @@ export function PomodoroTimer({
     }
   }, []);
 
-  const handleCategoryChange = (cat: PomodoroCategory) => {
+  const handleCategoryChange = useCallback((cat: PomodoroCategory) => {
     if (isRunning) return;
     setSelectedCategory(cat);
     setCategory(cat.id, (categoryDurations[cat.id] || 25) * 60);
     setShowCategoryDropdown(false);
-  };
+  }, [isRunning, categoryDurations, setCategory]);
 
-  const formatTime = (seconds: number) => {
+  const formatTime = useCallback((seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  }, []);
 
-  const handleAddCategory = () => {
+  const handleAddCategory = useCallback(() => {
     const newCategory: PomodoroCategory = {
       id: `cat-${Date.now()}`,
       name: 'Nova Categoria',
@@ -126,9 +191,9 @@ export function PomodoroTimer({
     };
     onSettingsChange(newSettings);
     setCategoryDurations(prev => ({ ...prev, [newCategory.id]: 25 }));
-  };
+  }, [settings, onSettingsChange]);
 
-  const handleUpdateCategory = (id: string, updates: Partial<PomodoroCategory>) => {
+  const handleUpdateCategory = useCallback((id: string, updates: Partial<PomodoroCategory>) => {
     const newSettings: PomodoroSettings = {
       ...settings,
       categories: settings.categories.map(cat =>
@@ -137,11 +202,11 @@ export function PomodoroTimer({
     };
     onSettingsChange(newSettings);
     if (selectedCategory.id === id) {
-      setSelectedCategory({ ...selectedCategory, ...updates });
+      setSelectedCategory(prev => ({ ...prev, ...updates }));
     }
-  };
+  }, [settings, onSettingsChange, selectedCategory.id]);
 
-  const handleDeleteCategory = (id: string) => {
+  const handleDeleteCategory = useCallback((id: string) => {
     if (settings.categories.length <= 1) return;
     const newSettings: PomodoroSettings = {
       ...settings,
@@ -151,9 +216,9 @@ export function PomodoroTimer({
     if (selectedCategory.id === id) {
       setSelectedCategory(newSettings.categories[0]);
     }
-  };
+  }, [settings, onSettingsChange, selectedCategory.id]);
 
-  const handleDurationChange = (catId: string, duration: number) => {
+  const handleDurationChange = useCallback((catId: string, duration: number) => {
     setCategoryDurations(prev => ({ ...prev, [catId]: duration }));
     const newSettings: PomodoroSettings = {
       ...settings,
@@ -162,15 +227,9 @@ export function PomodoroTimer({
       ),
     };
     onSettingsChange(newSettings);
-  };
+  }, [settings, onSettingsChange]);
 
-  if (!isLoaded) {
-    return (
-      <div className="relative bg-[#0a0f1f] rounded-2xl border border-[#00f6ff]/10 p-6 h-full flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-[#00f6ff]/30 border-t-[#00f6ff] rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const displayTime = useMemo(() => formatTime(timeLeft), [timeLeft, formatTime]);
 
   return (
     <motion.div
@@ -179,7 +238,7 @@ export function PomodoroTimer({
       className="relative bg-[#0a0f1f] rounded-2xl border border-[#00f6ff]/10 p-6 h-full overflow-hidden"
     >
       <div 
-        className="absolute inset-0 opacity-20"
+        className="absolute inset-0 opacity-20 transition-all duration-500"
         style={{
           background: `radial-gradient(ellipse at 50% 0%, ${selectedCategory.color}20 0%, transparent 70%)`,
         }}
@@ -279,7 +338,7 @@ export function PomodoroTimer({
                 strokeWidth="4"
                 className="text-white/5"
               />
-              <motion.circle
+              <circle
                 cx="96"
                 cy="96"
                 r="88"
@@ -289,24 +348,17 @@ export function PomodoroTimer({
                 strokeLinecap="round"
                 strokeDasharray={553}
                 strokeDashoffset={553 - (553 * progress) / 100}
-                initial={{ strokeDashoffset: 553 }}
-                animate={{ strokeDashoffset: 553 - (553 * progress) / 100 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
                 style={{
                   filter: `drop-shadow(0 0 8px ${selectedCategory.color}50)`,
+                  transition: 'stroke-dashoffset 0.5s ease-out',
                 }}
               />
             </svg>
             
             <div className="absolute inset-0 flex items-center justify-center">
-              <motion.span
-                key={timeLeft}
-                initial={{ scale: 1.1, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="text-5xl font-bold text-white tracking-tight font-mono"
-              >
-                {formatTime(timeLeft)}
-              </motion.span>
+              <span className="text-5xl font-bold text-white tracking-tight font-mono tabular-nums">
+                {displayTime}
+              </span>
             </div>
           </div>
         </div>
