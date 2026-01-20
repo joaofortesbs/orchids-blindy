@@ -45,6 +45,14 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Teams Section improvements v2
+  - Added member filter in Overview (all/in-flow/online/offline)
+  - Added teams preview section in Overview showing first 4 teams
+  - Created dedicated team detail interface with own metas, rankings and feeds
+  - Floating carousel navigation without arrows (hides when viewing team detail)
+  - Removed header from Teams section for cleaner look
+  - Team cards clickable to open team-specific interface
+
 - Jan 20, 2026: Teams Section complete interface
   - Created comprehensive TeamsSection component with 6 tabs in carousel
   - Visão Geral: Dashboard with stats, active members in flow, top 3 ranking
