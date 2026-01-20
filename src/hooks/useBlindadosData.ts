@@ -453,7 +453,18 @@ export function useBlindadosData() {
 
   const updateKanbanColumns = useCallback(async (columns: KanbanColumn[]) => {
     const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) return;
+    if (!kanbanService) {
+      console.error('updateKanbanColumns: service not available');
+      return;
+    }
+    
+    // Filter out temporary columns that haven't been saved yet
+    const validColumns = columns.filter(c => !c.id.startsWith('temp-'));
+    const hasTemporaryColumns = columns.some(c => c.id.startsWith('temp-'));
+    
+    if (hasTemporaryColumns) {
+      console.log('updateKanbanColumns: Skipping persistence - has temporary columns');
+    }
     
     // Store previous state for rollback
     const previousColumns = dataRef.current.kanban.columns;
@@ -465,10 +476,17 @@ export function useBlindadosData() {
       return updated;
     });
 
+    // Only persist if all columns have valid IDs
+    if (hasTemporaryColumns) return;
+
+    console.log('updateKanbanColumns: Persisting', validColumns.length, 'columns');
+    
     try {
-      const success = await kanbanService.updateColumnPositions(columns.map((c, i) => ({ id: c.id, title: c.title, position: i })));
+      const success = await kanbanService.updateColumnPositions(validColumns.map((c, i) => ({ id: c.id, title: c.title, position: i })));
+      console.log('updateKanbanColumns: Persistence result:', success);
       if (!success) {
         // Rollback on failure
+        console.error('updateKanbanColumns: Rolling back due to failure');
         setData(prev => {
           const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
           setCache(updated);

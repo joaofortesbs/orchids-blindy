@@ -314,6 +314,13 @@ export class KanbanService {
   }
 
   async updateColumnPositions(columns: { id: string; title: string; position: number }[]): Promise<boolean> {
+    if (columns.length === 0) {
+      console.log('KanbanService.updateColumnPositions: No columns to update');
+      return true;
+    }
+    
+    console.log('KanbanService.updateColumnPositions: Updating', columns.length, 'columns:', columns.map(c => ({ id: c.id, pos: c.position })));
+    
     try {
       return await withRetry(async () => {
         const promises = columns.map(col => 
@@ -322,16 +329,24 @@ export class KanbanService {
             .update({ position: col.position, title: col.title, updated_at: new Date().toISOString() })
             .eq('id', col.id)
             .eq('user_id', this.userId)
+            .select()
         );
 
         const results = await Promise.all(promises);
         
-        for (const result of results) {
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
           if (result.error) {
-            console.error('KanbanService.updateColumnPositions error:', result.error.message);
+            console.error('KanbanService.updateColumnPositions error for column', columns[i].id, ':', result.error.message);
             throw result.error;
           }
+          const rowsAffected = result.data?.length || 0;
+          if (rowsAffected === 0) {
+            console.error('KanbanService.updateColumnPositions: No rows affected for column', columns[i].id);
+          }
         }
+        
+        console.log('KanbanService.updateColumnPositions: Success');
         return true;
       });
     } catch (e) {
