@@ -45,15 +45,18 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: DEFINITIVE FIX v16 - Card persistence working
-  - CRITICAL BUG FIXED: API route /api/kanban/reorder-cards had WRONG RPC parameters
+- Jan 20, 2026: SERVICE ROLE AUTH FIX v17 - Full persistence working
+  - CRITICAL BUG FIXED: RPCs used auth.uid() but Service Role has NO auth identity
+  - NEW MIGRATION 007: All RPC functions now accept p_user_id as first parameter
+  - API routes now pass authenticated user.id to RPC functions
+  - Flow: API verifies user via cookies → passes user.id to RPC → RPC uses p_user_id
+  - This was the ROOT CAUSE of "Not authenticated" errors in RPC calls
+  - All operations now properly persist to database with service role key
+
+- Jan 20, 2026: DEFINITIVE FIX v16 - Card persistence parameters
+  - API route /api/kanban/reorder-cards had WRONG RPC parameters
   - Was sending: { p_column_id, p_positions } - INCORRECT
   - Now sending: { p_updates } with array of { id, column_id, position } - CORRECT
-  - This was the ROOT CAUSE of cards not persisting between columns
-  - API routes now correctly match the SQL RPC function signatures
-  - Flow: handleDragOver (UI) → handleDragEnd (API call) → RPC (atomic DB update)
-  - Both move-card and reorder-cards now have proper authentication
-  - Retry logic with exponential backoff (3 attempts: 500ms, 1s, 2s)
 
 - Jan 20, 2026: Kanban flickering fix v14
   - ROOT CAUSE: Double state updates - handleDragOver updates UI, then moveCard applied optimistic update again
@@ -165,4 +168,5 @@ Run these migrations in order in your Supabase SQL Editor:
 3. **Kanban** - `migrations/003_kanban_tables.sql` - Creates kanban_columns, kanban_cards, pomodoro_sessions, pomodoro_settings, and active_sessions tables with full RLS policies
 4. **Update Policies Fix** - `migrations/004_fix_update_policies.sql` - Fixes UPDATE policies to include WITH CHECK clause
 5. **Complete Kanban Fix** - `migrations/005_complete_kanban_fix.sql` - Complete fix with atomic RPCs, optimized indexes, and proper RLS policies
-6. **Definitive Kanban Fix** - `migrations/006_definitive_kanban_fix.sql` - **CRITICAL** Final fix with move_card RPC, update_card_positions, update_column_positions, and get_kanban_data functions
+6. **Definitive Kanban Fix** - `migrations/006_definitive_kanban_fix.sql` - Final fix with move_card RPC, update_card_positions, update_column_positions, and get_kanban_data functions
+7. **Service Role RPC Fix** - `migrations/007_service_role_rpc_fix.sql` - **CRITICAL** All RPCs now accept p_user_id as first parameter (required for Service Role auth)

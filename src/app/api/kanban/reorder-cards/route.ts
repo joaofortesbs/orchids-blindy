@@ -57,8 +57,8 @@ export async function POST(req: NextRequest) {
     
     console.log('[API reorder-cards] User:', user.id, 'Calling RPC update_card_positions with p_updates:', formattedUpdates);
     
-    // FIXED: The RPC function expects only p_updates parameter (JSONB array)
     const { data, error } = await supabase.rpc('update_card_positions', {
+      p_user_id: user.id,
       p_updates: formattedUpdates,
     });
     
@@ -71,6 +71,14 @@ export async function POST(req: NextRequest) {
     }
     
     console.log('[API reorder-cards] SUCCESS for user', user.id, ':', data);
+    
+    if (data && !data.success) {
+      console.error('[API reorder-cards] RPC returned failure:', data);
+      return NextResponse.json(
+        { error: data.error || 'Operation failed', success: false },
+        { status: 400 }
+      );
+    }
     
     return NextResponse.json({ 
       success: true, 

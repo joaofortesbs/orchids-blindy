@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
     console.log('[API move-card] User:', user.id, 'Calling RPC move_card:', { cardId, targetColumnId, position });
     
     const { data, error } = await supabase.rpc('move_card', {
+      p_user_id: user.id,
       p_card_id: cardId,
       p_target_column_id: targetColumnId,
       p_new_position: position,
@@ -64,6 +65,14 @@ export async function POST(req: NextRequest) {
     }
     
     console.log('[API move-card] SUCCESS for user', user.id, ':', data);
+    
+    if (data && !data.success) {
+      console.error('[API move-card] RPC returned failure:', data);
+      return NextResponse.json(
+        { error: data.error || 'Operation failed', success: false },
+        { status: 400 }
+      );
+    }
     
     return NextResponse.json({ 
       success: true, 
