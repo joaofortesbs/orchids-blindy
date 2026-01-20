@@ -28,7 +28,8 @@ const nextConfig: NextConfig = {
         loaders: [loaderPath]
       }
     }
-  }
+  },
+  allowedDevOrigins: ['*'],
 };
 
 export default nextConfig;
