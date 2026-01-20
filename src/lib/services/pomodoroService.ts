@@ -138,4 +138,34 @@ export class PomodoroService {
       return false;
     }
   }
+
+  async cleanupInvalidSessions(maxDurationMinutes: number = 120): Promise<number> {
+    try {
+      const { data: invalidSessions, error: selectError } = await this.supabase
+        .from('pomodoro_sessions')
+        .select('id')
+        .eq('user_id', this.userId)
+        .gt('duration_minutes', maxDurationMinutes);
+
+      if (selectError || !invalidSessions || invalidSessions.length === 0) {
+        return 0;
+      }
+
+      const idsToDelete = invalidSessions.map(s => s.id);
+      const { error: deleteError } = await this.supabase
+        .from('pomodoro_sessions')
+        .delete()
+        .in('id', idsToDelete);
+
+      if (deleteError) {
+        console.error('PomodoroService.cleanupInvalidSessions delete error:', deleteError.message);
+        return 0;
+      }
+
+      return idsToDelete.length;
+    } catch (e) {
+      console.error('PomodoroService.cleanupInvalidSessions exception:', e);
+      return 0;
+    }
+  }
 }
