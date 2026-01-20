@@ -1,0 +1,267 @@
+O comportamento que você descreveu é típico de duas coisas combinadas: política de RLS bloqueando UPDATE nos cards e lógica de sync/front ainda escrita de um jeito que “desfaz” as mudanças locais depois de alguns segundos.
+​
+
+Abaixo está um prompt enxuto, mas extremamente específico, focado em corrigir DEFINITIVAMENTE o movimento de tarefas (cards) entre colunas, incluindo políticas de banco e lógica do Kanban:
+
+Prompt para o agente (versão focada em tarefas)
+Quero que você atue como engenheiro sênior full‑stack + especialista em Supabase/Postgres + especialista em estruturas de Kanban (Trello/Jira/Linear).
+
+1. Contexto atual
+Projeto rodando em Next.js/React com Supabase como banco de dados e autenticação.
+
+Já foi corrigido o problema de ordem das colunas: agora a reordenação de colunas funciona e persiste corretamente.
+
+Ainda existe um problema crítico:
+
+Não é possível mover tarefas/atividades/cards entre colunas de forma definitiva.
+
+As tarefas parecem se mover no front, mas:
+
+Ou voltam para a coluna anterior depois de algum tempo.
+
+Ou somem/bugam ao recarregar a página.
+
+Suspeitas principais:
+
+Lógica de sincronização que sobrescreve o estado local com dados antigos do banco.
+
+Políticas de Row Level Security (RLS) no Supabase impedindo UPDATE/INSERT dos cards em determinadas colunas.
+​
+
+Inconsistências em column_id, task_order (ou campos similares) na tabela de tasks/cards.
+
+2. Seu objetivo
+Entender profundamente por que as tarefas não estão sendo movidas de forma persistente entre colunas.
+
+Revisar TODO o fluxo relacionado às tasks/cards:
+
+Componentes de Kanban (board, colunas, cards).
+
+Hooks de estado (ex: useKanbanData, useBlindadosData ou equivalentes).
+
+Funções de drag & drop (dnd-kit ou outra lib).
+
+Chamadas para Supabase (REST, RPC, ou via client) usadas para atualizar/mover tasks.
+
+API routes (se existirem) responsáveis por moveCard, updateTaskPosition, etc.
+
+Auditar e corrigir:
+
+O schema das tabelas de tasks/cards no Supabase.
+
+As políticas de RLS e permissões relacionadas a tasks/cards.
+
+A lógica de sync/rollback que pode estar revertendo as alterações.
+
+Entregar:
+
+Código corrigido dos arquivos necessários (front + API + SQL).
+
+Um fluxo de drag & drop que:
+
+Atualiza instantaneamente o front (optimistic UI).
+
+Persiste no Supabase de forma atômica e consistente.
+
+Nunca “desfaz” as alterações sem motivo (apenas em caso de erro real, com rollback consciente).
+
+3. Requisitos para o Banco (Supabase)
+Analise e, se necessário, ajuste o schema e as RLS de forma explícita:
+
+Tabelas esperadas (ou equivalentes):
+
+columns (ou kanban_columns):
+
+id (uuid, PK)
+
+board_id (uuid, FK)
+
+user_id ou owner_id (uuid)
+
+sort_order (integer)
+
+tasks / cards / activities:
+
+id (uuid, PK)
+
+column_id (uuid, FK para columns.id)
+
+board_id (uuid, opcional mas recomendado)
+
+user_id ou owner_id (uuid)
+
+task_order ou position (integer)
+
+Comportamento desejado ao mover um card:
+
+Ao arrastar o card para outra coluna:
+
+Atualizar column_id para a nova coluna.
+
+Atualizar task_order/position para refletir a nova posição na coluna.
+
+Isso deve acontecer numa operação atômica (idealmente via função RPC no Postgres).
+
+RLS (Row Level Security):
+
+Garantir que o usuário autenticado possa:
+
+SELECT, INSERT, UPDATE e opcionalmente DELETE nas tasks/cards que pertencem ao board/usuário.
+
+Corrigir/implementar políticas, por exemplo (ajuste nomes de tabela/campos para os do projeto):
+​
+
+sql
+-- Exemplo base para tasks/cards
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "users_select_own_tasks" ON tasks;
+CREATE POLICY "users_select_own_tasks"
+ON tasks
+FOR SELECT
+TO authenticated
+USING (
+  auth.uid() = user_id
+);
+
+DROP POLICY IF EXISTS "users_modify_own_tasks" ON tasks;
+CREATE POLICY "users_modify_own_tasks"
+ON tasks
+FOR INSERT, UPDATE, DELETE
+TO authenticated
+USING (
+  auth.uid() = user_id
+)
+WITH CHECK (
+  auth.uid() = user_id
+);
+Função RPC recomendada para mover task entre colunas (atômica):
+
+sql
+CREATE OR REPLACE FUNCTION move_task(
+  p_task_id uuid,
+  p_target_column_id uuid,
+  p_new_position integer
+)
+RETURNS void AS $$
+BEGIN
+  -- Opcional: reordenar outras tasks na coluna alvo
+  -- Exemplo simples: só atualiza essa task
+  UPDATE tasks
+  SET 
+    column_id = p_target_column_id,
+    task_order = p_new_position
+  WHERE id = p_task_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+Peço que você:
+
+Gere o SQL completo para:
+
+Garantir que column_id e task_order/position existam e sejam usados corretamente.
+
+Ativar RLS (se não estiver).
+
+Criar/ajustar as policies para permitir o movimento dos cards SEM abrir brechas de segurança.
+
+Criar a função RPC que será usada pelo front para mover tasks/cards.
+
+4. Requisitos na Lógica do Kanban (front + API)
+No front, quero que você:
+
+Localize o ponto exato onde o card é movido:
+
+Função de onDragEnd (dnd-kit ou similar).
+
+Funções auxiliares tipo handleCardMove, updateCardPosition, etc.
+
+Corrija a lógica seguindo este fluxo:
+
+Quando o usuário soltar o card em outra coluna:
+
+Atualizar o estado local imediatamente (optimistic update):
+
+Atualizar column_id do card.
+
+Atualizar task_order/posição localmente.
+
+Chamar uma rota de API ou diretamente o Supabase para executar a função RPC move_task.
+
+Em caso de sucesso:
+
+Manter o estado local.
+
+Em caso de erro:
+
+Fazer rollback para o estado anterior.
+
+Exibir feedback de erro (toast, console, etc.).
+
+Evitar que sync automático desfaça as mudanças:
+
+Revisar qualquer useEffect com setInterval ou loadData() que recarrega o board periodicamente.
+
+Garantir:
+
+Que não recarregue o estado do board enquanto houver operações pendentes de drag & drop.
+
+Que o recarregamento use sempre o dado mais recente, não sobrescrevendo alterações já confirmadas no banco.
+
+Criar/ajustar API route dedicada para mover task:
+
+Exemplo (ajustar para a estrutura do projeto):
+
+typescript
+// /app/api/kanban/[boardId]/move-task/route.ts
+import { NextResponse } from 'next/server';
+import { createClient } from '@/utils/supabase/server';
+
+export async function POST(req: Request, { params }: { params: { boardId: string } }) {
+  const { taskId, targetColumnId, newPosition } = await req.json();
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc('move_task', {
+    p_task_id: taskId,
+    p_target_column_id: targetColumnId,
+    p_new_position: newPosition,
+  });
+
+  if (error) {
+    console.error('move_task error', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
+E no front:
+
+typescript
+const moveTask = async (taskId, targetColumnId, newPosition) => {
+  // optimistic update aqui
+  // ...
+
+  const res = await fetch(`/api/kanban/${boardId}/move-task`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId, targetColumnId, newPosition }),
+  });
+
+  if (!res.ok) {
+    // rollback + erro
+  }
+};
+5. Estilo de atuação
+Analise todos os arquivos relevantes do Kanban (componentes, hooks, API, tipos, utils).
+
+Identifique todas as causas possíveis para:
+
+Task não mudar de coluna.
+
+Task sumir ao recarregar.
+
+Task voltar para a coluna original após algum tempo.
+
+Corrija com precisão absoluta, mantendo o código limpo, tipado e performático.
+
+Explique dentro dos próprios arquivos com comentários curtos e objetivos apenas onde for necessário para entendimento de regras de negócio ou RLS.
+

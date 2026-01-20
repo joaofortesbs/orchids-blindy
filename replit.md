@@ -138,4 +138,5 @@ Run these migrations in order in your Supabase SQL Editor:
 2. **RLS Fix** - `migrations/002_fix_rls_policies.sql` - Fixes RLS policy recursion issues
 3. **Kanban** - `migrations/003_kanban_tables.sql` - Creates kanban_columns, kanban_cards, pomodoro_sessions, pomodoro_settings, and active_sessions tables with full RLS policies
 4. **Update Policies Fix** - `migrations/004_fix_update_policies.sql` - Fixes UPDATE policies to include WITH CHECK clause
-5. **Complete Kanban Fix** - `migrations/005_complete_kanban_fix.sql` - **CRITICAL** Complete fix with atomic RPCs, optimized indexes, and proper RLS policies
+5. **Complete Kanban Fix** - `migrations/005_complete_kanban_fix.sql` - Complete fix with atomic RPCs, optimized indexes, and proper RLS policies
+6. **Definitive Kanban Fix** - `migrations/006_definitive_kanban_fix.sql` - **CRITICAL** Final fix with move_card RPC, update_card_positions, update_column_positions, and get_kanban_data functions
