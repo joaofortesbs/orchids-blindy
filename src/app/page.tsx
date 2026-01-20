@@ -8,6 +8,7 @@ import { TimeChart } from '@/components/blindados/TimeChart';
 import { KanbanBoard } from '@/components/blindados/KanbanBoard';
 import { VisoesDashboard } from '@/components/visoes/VisoesDashboard';
 import { AuthPage } from '@/components/auth/AuthPage';
+import { CreateOrganizationModal } from '@/components/blindados/CreateOrganizationModal';
 import { useBlindadosData } from '@/hooks/useBlindadosData';
 import { useAutoFix } from '@/hooks/useAutoFix';
 import { LiveSession } from '@/hooks/useTimerPersistence';
@@ -16,6 +17,8 @@ import { AuthProvider } from '@/lib/contexts/AuthContext';
 import { downloadCSV } from '@/lib/utils/storage';
 import { safeStorage } from '@/lib/utils/safeStorage';
 import { STORAGE_KEYS } from '@/lib/utils/storage.constants';
+import { Organization, CreateOrganizationData } from '@/lib/types/organization';
+import { createClient } from '@/lib/supabase/client';
 import { format } from 'date-fns';
 
 type Section = 'flows' | 'visoes';
@@ -49,7 +52,11 @@ function MainApp() {
   
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrganization, setSelectedOrganization] = useState<Organization | null>(null);
+  const [isCreateOrgModalOpen, setIsCreateOrgModalOpen] = useState(false);
   const { user, isLoading: authLoading, signOut } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
 
   const mountedRef = useRef(true);
   const transitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -71,6 +78,137 @@ function MainApp() {
   useEffect(() => {
     safeStorage.setString(STORAGE_KEYS.SIDEBAR_COLLAPSED, String(collapsed));
   }, [collapsed]);
+
+  useEffect(() => {
+    const loadOrganizations = async () => {
+      if (!user) {
+        setOrganizations([]);
+        setSelectedOrganization(null);
+        return;
+      }
+
+      try {
+        const { data: membershipData } = await supabase
+          .from('organization_members')
+          .select('organization_id')
+          .eq('user_id', user.id)
+          .eq('status', 'active');
+
+        if (!membershipData || membershipData.length === 0) {
+          setOrganizations([]);
+          return;
+        }
+
+        const orgIds = membershipData.map(m => m.organization_id);
+        
+        const { data: orgsData } = await supabase
+          .from('organizations')
+          .select('*')
+          .in('id', orgIds)
+          .order('created_at', { ascending: false });
+
+        const orgs: Organization[] = (orgsData || []).map(o => ({
+          id: o.id,
+          name: o.name,
+          slug: o.slug,
+          businessModel: o.business_model,
+          isPrivate: o.is_private,
+          ownerId: o.owner_id,
+          createdAt: o.created_at,
+          updatedAt: o.updated_at,
+        }));
+
+        setOrganizations(orgs);
+
+        const savedOrgId = safeStorage.getString('selected_organization_id');
+        if (savedOrgId) {
+          const savedOrg = orgs.find(o => o.id === savedOrgId);
+          if (savedOrg) {
+            setSelectedOrganization(savedOrg);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load organizations:', e);
+      }
+    };
+
+    loadOrganizations();
+  }, [user, supabase]);
+
+  const handleSelectOrganization = useCallback((org: Organization | null) => {
+    setSelectedOrganization(org);
+    if (org) {
+      safeStorage.setString('selected_organization_id', org.id);
+    } else {
+      safeStorage.remove('selected_organization_id');
+    }
+  }, []);
+
+  const handleCreateOrganization = useCallback(async (data: CreateOrganizationData) => {
+    if (!user) return;
+
+    const slug = data.name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    const { data: orgData, error: orgError } = await supabase
+      .from('organizations')
+      .insert({
+        name: data.name,
+        slug: `${slug}-${Date.now().toString(36)}`,
+        business_model: data.businessModel,
+        is_private: data.isPrivate,
+        owner_id: user.id,
+      })
+      .select()
+      .single();
+
+    if (orgError) {
+      console.error('Failed to create organization:', orgError);
+      throw orgError;
+    }
+
+    await supabase
+      .from('organization_members')
+      .insert({
+        organization_id: orgData.id,
+        user_id: user.id,
+        role: 'owner',
+        status: 'active',
+        joined_at: new Date().toISOString(),
+      });
+
+    for (const invite of data.invites) {
+      if (invite.email) {
+        await supabase
+          .from('organization_invites')
+          .insert({
+            organization_id: orgData.id,
+            email: invite.email.toLowerCase(),
+            role: invite.role,
+            invited_by: user.id,
+          });
+      }
+    }
+
+    const newOrg: Organization = {
+      id: orgData.id,
+      name: orgData.name,
+      slug: orgData.slug,
+      businessModel: orgData.business_model,
+      isPrivate: orgData.is_private,
+      ownerId: orgData.owner_id,
+      createdAt: orgData.created_at,
+      updatedAt: orgData.updated_at,
+    };
+
+    setOrganizations(prev => [newOrg, ...prev]);
+    setSelectedOrganization(newOrg);
+    safeStorage.setString('selected_organization_id', newOrg.id);
+  }, [user, supabase]);
 
   const handleSectionChange = useCallback((section: Section) => {
     if (section === activeSection || isTransitioning) return;
@@ -147,6 +285,16 @@ function MainApp() {
         onCollapsedChange={setCollapsed}
         onSignOut={signOut}
         userName={user?.user_metadata?.nickname || user?.user_metadata?.full_name || user?.email?.split('@')[0]}
+        organizations={organizations}
+        selectedOrganization={selectedOrganization}
+        onSelectOrganization={handleSelectOrganization}
+        onCreateOrganization={() => setIsCreateOrgModalOpen(true)}
+      />
+
+      <CreateOrganizationModal
+        isOpen={isCreateOrgModalOpen}
+        onClose={() => setIsCreateOrgModalOpen(false)}
+        onCreate={handleCreateOrganization}
       />
 
       <main className="flex-1 h-screen overflow-hidden">

@@ -369,7 +369,13 @@ export function KanbanBoard({
 
   const collisionDetectionStrategy: CollisionDetection = useCallback((args) => {
     if (activeColumn) {
-      return closestCenter(args);
+      const columnContainers = args.droppableContainers.filter(
+        container => String(container.id).startsWith('column-')
+      );
+      return closestCenter({
+        ...args,
+        droppableContainers: columnContainers,
+      });
     }
 
     const pointerCollisions = pointerWithin(args);

@@ -253,7 +253,7 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
               className={`w-3 h-3 rounded-full transition-all ${isLive ? 'animate-pulse ring-2 ring-offset-1 ring-offset-[#0a0f1f]' : ''}`}
               style={{ 
                 backgroundColor: cat.color,
-                ringColor: isLive ? cat.color : 'transparent',
+                ...(isLive && { boxShadow: `0 0 0 2px ${cat.color}` }),
               }}
             />
             <span className={`text-xs text-white ${isHidden ? 'line-through' : ''}`}>{cat.name}</span>

@@ -29,7 +29,11 @@ const nextConfig: NextConfig = {
       }
     }
   },
-  allowedDevOrigins: ['*'],
+  allowedDevOrigins: [
+    '*.replit.dev',
+    '*.replit.app',
+    'localhost:5000',
+  ],
 };
 
 export default nextConfig;
