@@ -45,6 +45,11 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Organization management system v2
+  - Added "Membros" and "Equipes" sections in sidebar when organization is selected
+  - Improved error handling for organization creation with detailed messages
+  - Better detection of missing database tables and RLS policy issues
+  
 - Jan 20, 2026: Organization management system
   - Added organization dropdown to sidebar with creation modal
   - Created database migration for organizations, members, and invites tables (migrations/001_organizations.sql)
