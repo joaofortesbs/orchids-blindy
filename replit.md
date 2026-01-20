@@ -45,7 +45,17 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Organization management system
+  - Added organization dropdown to sidebar with creation modal
+  - Created database migration for organizations, members, and invites tables (migrations/001_organizations.sql)
+  - Added TypeScript types for organization system (src/lib/types/organization.ts)
+  - Improved Kanban column drag-and-drop collision detection
+  
 - Jan 20, 2026: Initial import and Replit environment setup
   - Configured Next.js to allow all dev origins for Replit proxy
   - Set up environment variables and secrets
   - Configured deployment for autoscale
+
+## Database Migrations
+
+To enable the organizations feature, run the SQL in `migrations/001_organizations.sql` in your Supabase SQL Editor.
