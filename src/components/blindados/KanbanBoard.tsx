@@ -43,6 +43,7 @@ interface KanbanBoardProps {
   onUpdateCard: (columnId: string, cardId: string, updates: Partial<KanbanCard>) => void;
   onDeleteCard: (columnId: string, cardId: string) => void;
   onMoveCard: (cardId: string, sourceColumnId: string, targetColumnId: string, targetIndex: number) => void;
+  onUpdateCardPositions: (columnId: string, cards: KanbanCard[]) => void;
 }
 
 const priorityColors: Record<Priority, { bg: string; text: string; label: string }> = {
@@ -327,6 +328,8 @@ export function KanbanBoard({
   onAddCard,
   onUpdateCard,
   onDeleteCard,
+  onMoveCard,
+  onUpdateCardPositions,
 }: KanbanBoardProps) {
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
   const [activeColumn, setActiveColumn] = useState<KanbanColumn | null>(null);
@@ -342,6 +345,7 @@ export function KanbanBoard({
   const [renamingColumnId, setRenamingColumnId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const lastOverIdRef = useRef<UniqueIdentifier | null>(null);
+  const originalCardPositionRef = useRef<{ cardId: string; columnId: string; index: number } | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -425,6 +429,13 @@ export function KanbanBoard({
     if (activeData?.type === 'card') {
       setActiveCard(activeData.card);
       setActiveColumnId(activeData.columnId);
+      const column = columns.find(c => c.id === activeData.columnId);
+      const cardIndex = column?.cards.findIndex(c => c.id === activeData.card.id) ?? -1;
+      originalCardPositionRef.current = {
+        cardId: activeData.card.id,
+        columnId: activeData.columnId,
+        index: cardIndex,
+      };
     } else if (activeData?.type === 'sortable-column') {
       setActiveColumn(activeData.column);
     }
@@ -523,11 +534,31 @@ export function KanbanBoard({
       }
     }
 
+    if (activeCard && originalCardPositionRef.current) {
+      const original = originalCardPositionRef.current;
+      const currentColumnId = activeColumnId;
+      
+      if (currentColumnId && original.columnId !== currentColumnId) {
+        const targetColumn = columns.find(c => c.id === currentColumnId);
+        const targetIndex = targetColumn?.cards.findIndex(c => c.id === activeCard.id) ?? 0;
+        onMoveCard(activeCard.id, original.columnId, currentColumnId, targetIndex);
+      } else if (currentColumnId && original.columnId === currentColumnId) {
+        const column = columns.find(c => c.id === currentColumnId);
+        if (column) {
+          const newIndex = column.cards.findIndex(c => c.id === activeCard.id);
+          if (newIndex !== original.index) {
+            onUpdateCardPositions(currentColumnId, column.cards);
+          }
+        }
+      }
+    }
+
     setActiveCard(null);
     setActiveColumn(null);
     setActiveColumnId(null);
     setOverColumnId(null);
     lastOverIdRef.current = null;
+    originalCardPositionRef.current = null;
   };
 
   const handleAddColumn = () => {

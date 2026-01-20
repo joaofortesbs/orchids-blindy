@@ -243,4 +243,29 @@ export class KanbanService {
       return false;
     }
   }
+
+  async updateCardPositions(columnId: string, cards: { id: string; position: number }[]): Promise<boolean> {
+    try {
+      const promises = cards.map(card =>
+        this.supabase
+          .from('kanban_cards')
+          .update({ position: card.position, column_id: columnId, updated_at: new Date().toISOString() })
+          .eq('id', card.id)
+          .eq('user_id', this.userId)
+      );
+
+      const results = await Promise.all(promises);
+
+      for (const result of results) {
+        if (result.error) {
+          console.error('KanbanService.updateCardPositions error:', result.error.message);
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      console.error('KanbanService.updateCardPositions exception:', e);
+      return false;
+    }
+  }
 }

@@ -258,12 +258,20 @@ export function useBlindadosData() {
     const card = dataRef.current.kanban.columns.find(c => c.id === sourceColId)?.cards.find(c => c.id === cardId);
     if (!card) return;
 
+    let updatedSourceCards: { id: string; position: number }[] = [];
+    let updatedTargetCards: { id: string; position: number }[] = [];
+
     setData(prev => {
       const newCols = prev.kanban.columns.map(c => {
-        if (c.id === sourceColId) return { ...c, cards: c.cards.filter(card => card.id !== cardId) };
+        if (c.id === sourceColId) {
+          const newCards = c.cards.filter(card => card.id !== cardId);
+          updatedSourceCards = newCards.map((card, i) => ({ id: card.id, position: i }));
+          return { ...c, cards: newCards };
+        }
         if (c.id === targetColId) {
           const list = [...c.cards];
           list.splice(targetIdx, 0, card);
+          updatedTargetCards = list.map((card, i) => ({ id: card.id, position: i }));
           return { ...c, cards: list };
         }
         return c;
@@ -274,7 +282,10 @@ export function useBlindadosData() {
     });
 
     try {
-      await kanbanService.moveCard(cardId, targetColId, targetIdx);
+      await Promise.all([
+        kanbanService.updateCardPositions(sourceColId, updatedSourceCards),
+        kanbanService.updateCardPositions(targetColId, updatedTargetCards),
+      ]);
     } catch (e) {
       console.error('moveCard error:', e);
     }
@@ -325,6 +336,17 @@ export function useBlindadosData() {
       await kanbanService.updateColumnPositions(columns.map((c, i) => ({ id: c.id, title: c.title, position: i })));
     } catch (e) {
       console.error('updateKanbanColumns error:', e);
+    }
+  }, []);
+
+  const updateCardPositions = useCallback(async (columnId: string, cards: KanbanCard[]) => {
+    const kanbanService = servicesRef.current.kanban;
+    if (!kanbanService) return;
+
+    try {
+      await kanbanService.updateCardPositions(columnId, cards.map((c, i) => ({ id: c.id, position: i })));
+    } catch (e) {
+      console.error('updateCardPositions error:', e);
     }
   }, []);
 
@@ -405,6 +427,7 @@ export function useBlindadosData() {
     updateKanbanCard,
     deleteKanbanCard,
     moveCard,
+    updateCardPositions,
     addPomodoroSession,
     updatePomodoroSettings,
     forceSync: loadData,

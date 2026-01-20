@@ -36,6 +36,7 @@ function MainApp() {
     updateKanbanCard,
     deleteKanbanCard,
     moveCard,
+    updateCardPositions,
     addPomodoroSession,
     updatePomodoroSettings,
   } = useBlindadosData();
@@ -335,6 +336,7 @@ function MainApp() {
                   onUpdateCard={updateKanbanCard}
                   onDeleteCard={deleteKanbanCard}
                   onMoveCard={moveCard}
+                  onUpdateCardPositions={updateCardPositions}
                 />
               </div>
             </motion.div>
