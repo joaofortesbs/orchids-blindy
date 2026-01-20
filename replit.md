@@ -45,6 +45,15 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Kanban persistence definitive fix v3
+  - Fixed JSONB serialization: tags/subtasks now passed as arrays directly to Supabase (not JSON.stringify)
+  - Added rowsAffected verification in updateCard/deleteCard to catch silent RLS failures
+  - Added detailed debug logs (userId, cardId, rowsAffected) for troubleshooting
+  - Hook useBlindadosData now reloads data when update/delete operations fail
+  - EditCardModal no longer calls onClose() after onUpdate() to prevent duplicate close
+  - All card edits (title, priority, description, tags, subtasks) now persist correctly
+  - Card deletion now works and persists to database
+
 - Jan 20, 2026: Kanban persistence complete overhaul v2
   - Fixed card movements between columns persisting all card positions
   - Fixed card reordering within same column persisting positions
@@ -52,8 +61,6 @@ npm run start -- -p 5000 -H 0.0.0.0
   - Fixed handleDragEnd to call onMoveCard for cross-column moves
   - Fixed handleDragEnd to call onUpdateCardPositions for same-column reorders
   - Added originalCardPositionRef to track card initial position during drag
-  - All card edits (title, priority, description, tags, subtasks) now persist correctly
-  - Card deletion now works and persists to database
 
 - Jan 20, 2026: Kanban and Timer persistence fixes
   - Created migration for Kanban tables (migrations/003_kanban_tables.sql)
