@@ -6,17 +6,16 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function runMigration() {
-  const dbUrl = process.env.SUPABASE_DB_URL;
-
-  if (!dbUrl) {
-    console.error('Missing SUPABASE_DB_URL environment variable');
-    process.exit(1);
-  }
-
-  const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+  // Using connection string format for session pooler
+  const connectionString = 'postgresql://postgres.ynxeyaqdhihjxwajualk:Joaomarcelo%2373@aws-1-us-east-2.pooler.supabase.com:5432/postgres';
+  
+  const client = new pg.Client({ 
+    connectionString,
+    ssl: { rejectUnauthorized: false }
+  });
 
   try {
-    console.log('Connecting to Supabase database...');
+    console.log('Connecting to Supabase via Session Pooler...');
     await client.connect();
     console.log('Connected successfully!');
 
@@ -30,10 +29,6 @@ async function runMigration() {
 
   } catch (error) {
     console.error('Migration error:', error.message);
-    if (error.message.includes('already exists')) {
-      console.log('\nNote: Some objects already exist, which is fine.');
-    }
-    process.exit(1);
   } finally {
     await client.end();
   }
