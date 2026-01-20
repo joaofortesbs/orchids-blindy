@@ -2,11 +2,53 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { KanbanColumn, KanbanCard } from '@/lib/types/blindados';
 
 const DEFAULT_COLUMNS = ['A FAZER', 'EM PROGRESSO', 'CONCLUÍDO'];
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 300;
+const OPERATION_TIMEOUT_MS = 8000;
 
 export interface KanbanOperationResult<T = void> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+// Utility: Execute with timeout
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('Operation timeout')), timeoutMs);
+  });
+  
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (e) {
+    clearTimeout(timeoutId!);
+    throw e;
+  }
+}
+
+// Utility: Retry with exponential backoff
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = MAX_RETRIES,
+  delayMs: number = RETRY_DELAY_MS
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await withTimeout(operation(), OPERATION_TIMEOUT_MS);
+    } catch (e) {
+      lastError = e as Error;
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, delayMs * Math.pow(2, attempt)));
+      }
+    }
+  }
+  
+  throw lastError;
 }
 
 export class KanbanService {
@@ -86,18 +128,25 @@ export class KanbanService {
   }
 
   async addColumn(title: string, position: number): Promise<KanbanColumn | null> {
-    const { data, error } = await this.supabase
-      .from('kanban_columns')
-      .insert({ user_id: this.userId, title: title.toUpperCase(), position })
-      .select()
-      .single();
+    try {
+      return await withRetry(async () => {
+        const { data, error } = await this.supabase
+          .from('kanban_columns')
+          .insert({ user_id: this.userId, title: title.toUpperCase(), position })
+          .select()
+          .single();
 
-    if (error) {
-      console.error('KanbanService.addColumn error:', error.message);
+        if (error) {
+          console.error('KanbanService.addColumn error:', error.message);
+          throw error;
+        }
+
+        return { id: data.id, title: data.title, cards: [] };
+      });
+    } catch (e) {
+      console.error('KanbanService.addColumn failed after retries:', e);
       return null;
     }
-
-    return { id: data.id, title: data.title, cards: [] };
   }
 
   async deleteColumn(columnId: string): Promise<boolean> {
@@ -115,36 +164,43 @@ export class KanbanService {
   }
 
   async addCard(columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>, position: number): Promise<KanbanCard | null> {
-    const { data, error } = await this.supabase
-      .from('kanban_cards')
-      .insert({
-        user_id: this.userId,
-        column_id: columnId,
-        title: card.title,
-        description: card.description || '',
-        priority: card.priority || 'media',
-        tags: card.tags || [],
-        subtasks: card.subtasks || [],
-        position,
-      })
-      .select()
-      .single();
+    try {
+      return await withRetry(async () => {
+        const { data, error } = await this.supabase
+          .from('kanban_cards')
+          .insert({
+            user_id: this.userId,
+            column_id: columnId,
+            title: card.title,
+            description: card.description || '',
+            priority: card.priority || 'media',
+            tags: card.tags || [],
+            subtasks: card.subtasks || [],
+            position,
+          })
+          .select()
+          .single();
 
-    if (error) {
-      console.error('KanbanService.addCard error:', error.message, error.details);
+        if (error) {
+          console.error('KanbanService.addCard error:', error.message, error.details);
+          throw error;
+        }
+
+        return {
+          id: data.id,
+          title: data.title,
+          description: data.description || '',
+          priority: data.priority as 'alta' | 'media' | 'baixa',
+          tags: data.tags || [],
+          subtasks: data.subtasks || [],
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
+      });
+    } catch (e) {
+      console.error('KanbanService.addCard failed after retries:', e);
       return null;
     }
-
-    return {
-      id: data.id,
-      title: data.title,
-      description: data.description || '',
-      priority: data.priority as 'alta' | 'media' | 'baixa',
-      tags: data.tags || [],
-      subtasks: data.subtasks || [],
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
   }
 
   async updateCard(cardId: string, updates: Partial<KanbanCard>): Promise<boolean> {

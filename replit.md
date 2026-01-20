@@ -45,7 +45,10 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban performance optimization v4
+- Jan 20, 2026: Kanban performance optimization v5
+  - Singleton Supabase client: reuses connection for faster subsequent requests
+  - Added retry system with exponential backoff (2 retries, 300ms base delay)
+  - Added operation timeout (8 seconds) to prevent hanging requests
   - Implemented optimistic updates for addKanbanCard (instant UI, background save)
   - Implemented optimistic updates for addKanbanColumn (instant UI, background save)
   - Cards/columns appear instantly with temporary IDs, replaced by real IDs after DB response
