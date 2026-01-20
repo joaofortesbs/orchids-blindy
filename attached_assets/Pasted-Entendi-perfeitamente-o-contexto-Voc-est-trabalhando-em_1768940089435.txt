@@ -1,0 +1,400 @@
+Entendi perfeitamente o contexto! Você está trabalhando em um quadro Kanban no Replit com problemas de reordenação de colunas e cards, especialmente com colunas criadas pelo usuário. Vou reformular seu prompt de forma mais estruturada e completa para o Replit Agent:
+​
+
+CONTEXTO DO PROBLEMA
+Sistema: Quadro de tarefas Kanban integrado com Supabase
+Problemas identificados:
+
+Reordenação de colunas não está persistindo no banco de dados
+
+Movimentação de cards entre colunas customizadas não funciona de forma permanente
+
+Falta de atualização instantânea no front-end com sincronização robusta no background
+
+OBJETIVOS PRINCIPAIS
+1. PERSISTÊNCIA DE DADOS
+Implementar sistema de salvamento robusto para ordem das colunas no Supabase
+
+Garantir persistência definitiva da posição dos cards dentro das colunas
+
+Criar mecanismo de sincronização bidirecional (front-end ↔ banco de dados)
+
+2. PERFORMANCE E UX
+Front-end: Atualização visual instantânea (optimistic updates)
+
+Back-end: Salvamento em background rápido, seguro e resiliente
+
+Zero lag perceptível para o usuário durante drag-and-drop
+
+3. INTEGRIDADE ESTRUTURAL
+Verificar e corrigir schema do banco de dados (campos order, position, etc.)
+
+Garantir constraints e índices apropriados para performance
+
+Implementar validações de integridade referencial
+
+PLANO DE EXECUÇÃO DETALHADO
+MACRO-STEP 1: DIAGNÓSTICO COMPLETO ⚡
+Objetivo: Mapear estado atual e identificar gaps
+
+Micro-steps:
+Análise do Schema Supabase
+
+Verificar tabelas columns e cards
+
+Confirmar existência de campos: order, position, column_id, board_id
+
+Validar foreign keys e constraints
+
+Checar índices em campos de ordenação
+
+Auditoria de Código
+
+Mapear fluxo completo de dados: KanbanBoard.tsx → API Routes → Supabase
+
+Identificar funções responsáveis por: updateColumnOrder, updateCardPosition, moveCard
+
+Localizar diferenças entre colunas padrão vs. colunas customizadas
+
+Verificar tratamento de IDs (UUID vs. IDs estáticos)
+
+Análise de Integrações
+
+Confirmar configuração do Supabase Client (Service Role vs. Anon Key)
+
+Verificar Row Level Security (RLS) policies
+
+Testar autenticação em operações de escrita
+
+Validar tratamento de erros e timeouts
+
+Logging e Observabilidade
+
+Adicionar logs detalhados em pontos críticos:
+
+typescript
+console.log('[DRAG_START]', { columnId, cardId })
+console.log('[DB_UPDATE]', { query, params, result })
+console.log('[ERROR]', { operation, error, stack })
+Implementar timestamps para medir latência de cada operação
+
+Entregável: Relatório com gaps identificados + SQL queries para correções
+
+MACRO-STEP 2: CORREÇÕES DE BANCO DE DADOS 🗄️
+Objetivo: Garantir estrutura adequada para persistência
+
+Micro-steps:
+Schema de Colunas
+
+sql
+-- Verificar/adicionar campos necessários
+ALTER TABLE columns 
+ADD COLUMN IF NOT EXISTS "order" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS board_id UUID REFERENCES boards(id);
+
+CREATE INDEX IF NOT EXISTS idx_columns_board_order 
+ON columns(board_id, "order");
+Schema de Cards
+
+sql
+ALTER TABLE cards 
+ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS column_id UUID REFERENCES columns(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_cards_column_position 
+ON cards(column_id, position);
+RLS Policies
+
+sql
+-- Garantir que usuários podem atualizar suas próprias colunas/cards
+CREATE POLICY "Users can update own columns" ON columns
+FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own cards" ON cards
+FOR UPDATE USING (auth.uid() = user_id);
+Função de Reordenação Atômica
+
+sql
+CREATE OR REPLACE FUNCTION reorder_cards(
+  p_column_id UUID,
+  p_card_ids UUID[]
+) RETURNS void AS $$
+BEGIN
+  FOR i IN 1..array_length(p_card_ids, 1) LOOP
+    UPDATE cards 
+    SET position = i - 1, column_id = p_column_id
+    WHERE id = p_card_ids[i];
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+Entregável: Scripts SQL completos para executar no Supabase SQL Editor
+
+MACRO-STEP 3: IMPLEMENTAÇÃO FRONT-END ⚛️
+Objetivo: Optimistic updates + sincronização robusta
+
+Micro-steps:
+Refatorar Estado do Kanban
+
+typescript
+// Separar estado local (UI) de estado remoto (DB)
+const [localColumns, setLocalColumns] = useState([])
+const [isSyncing, setIsSyncing] = useState(false)
+Implementar Optimistic Updates
+
+typescript
+const handleDragEnd = async (result) => {
+  // 1. Atualizar UI instantaneamente
+  const newColumns = reorderColumns(localColumns, result)
+  setLocalColumns(newColumns)
+  
+  // 2. Sincronizar em background
+  try {
+    await syncToDatabase(newColumns)
+  } catch (error) {
+    // 3. Reverter em caso de erro
+    setLocalColumns(localColumns)
+    showErrorToast('Falha ao salvar')
+  }
+}
+Sistema de Debounce Inteligente
+
+typescript
+const debouncedSync = useMemo(
+  () => debounce(syncToDatabase, 500, { 
+    leading: false, 
+    trailing: true 
+  }),
+  []
+)
+Queue de Sincronização
+
+typescript
+// Para garantir ordem de operações
+const syncQueue = useRef([])
+const processSyncQueue = async () => {
+  while (syncQueue.current.length > 0) {
+    const operation = syncQueue.current.shift()
+    await executeSync(operation)
+  }
+}
+Tratamento de Colunas Temporárias
+
+typescript
+// Garantir que colunas sem UUID real não permitam drops
+const isValidDropTarget = (columnId) => {
+  return columnId && !columnId.startsWith('temp-')
+}
+Entregável: Componente KanbanBoard refatorado com sistema de sync robusto
+
+MACRO-STEP 4: API ROUTES OTIMIZADAS 🚀
+Objetivo: Endpoints rápidos e seguros
+
+Micro-steps:
+Endpoint de Reordenação de Colunas
+
+typescript
+// /api/boards/[boardId]/columns/reorder
+export async function POST(req) {
+  const { columnIds } = await req.json()
+  const supabase = createServerClient()
+  
+  // Usar transação para atomicidade
+  const { error } = await supabase.rpc('reorder_columns', {
+    p_column_ids: columnIds
+  })
+  
+  return Response.json({ success: !error })
+}
+Endpoint de Movimentação de Cards
+
+typescript
+// /api/boards/[boardId]/cards/move
+export async function POST(req) {
+  const { cardId, targetColumnId, newPosition } = await req.json()
+  
+  // Atualização otimizada em uma query
+  const { error } = await supabase
+    .from('cards')
+    .update({ 
+      column_id: targetColumnId, 
+      position: newPosition,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', cardId)
+  
+  return Response.json({ success: !error })
+}
+Batch Updates
+
+typescript
+// Para reordenar múltiplos cards de uma vez
+const { error } = await supabase.rpc('reorder_cards', {
+  p_column_id: columnId,
+  p_card_ids: cardIds
+})
+Cache e Revalidação
+
+typescript
+// Usar Next.js revalidation
+revalidatePath(`/boards/${boardId}`)
+Entregável: API routes otimizadas e documentadas
+
+MACRO-STEP 5: VALIDAÇÃO E TESTES ✅
+Objetivo: Garantir robustez em todos os cenários
+
+Micro-steps:
+Testes de Colunas Padrão
+
+ Reordenar colunas padrão
+
+ Verificar persistência após reload
+
+ Testar com múltiplas janelas abertas
+
+Testes de Colunas Customizadas
+
+ Criar nova coluna
+
+ Mover cards para coluna custom
+
+ Reordenar coluna custom
+
+ Deletar coluna custom (verificar cascade)
+
+Testes de Edge Cases
+
+ Drag durante sincronização
+
+ Erro de rede durante save
+
+ Operações simultâneas (race conditions)
+
+ Colunas/cards com IDs temporários
+
+Testes de Performance
+
+ Board com 50+ cards
+
+ Múltiplas reordenações rápidas
+
+ Latência de sincronização (< 200ms ideal)
+
+Validação de Dados
+
+ Abrir DevTools (F12) → Network tab
+
+ Verificar payloads das requests
+
+ Confirmar status 200 em todas as operações
+
+ Checar console para erros/warnings
+
+Entregável: Checklist completo validado + screenshots de testes
+
+MACRO-STEP 6: MONITORAMENTO E ROLLBACK 📊
+Objetivo: Sistema observável e recuperável
+
+Micro-steps:
+Implementar Error Boundaries
+
+typescript
+<ErrorBoundary fallback={<KanbanErrorState />}>
+  <KanbanBoard />
+</ErrorBoundary>
+Sistema de Rollback
+
+typescript
+const [history, setHistory] = useState([])
+const undo = () => {
+  const previous = history.pop()
+  setLocalColumns(previous)
+  syncToDatabase(previous)
+}
+Logs Estruturados
+
+typescript
+logger.info('card_moved', {
+  cardId,
+  fromColumn,
+  toColumn,
+  duration: Date.now() - startTime
+})
+Health Check Endpoint
+
+typescript
+// /api/health
+export async function GET() {
+  const dbOk = await testSupabaseConnection()
+  return Response.json({ status: dbOk ? 'healthy' : 'degraded' })
+}
+CRITÉRIOS DE SUCESSO
+✅ Funcionalidade
+
+Colunas padrão e customizadas podem ser reordenadas
+
+Cards podem ser movidos entre qualquer tipo de coluna
+
+Estado persiste após reload/logout
+
+✅ Performance
+
+Atualização visual em < 50ms
+
+Sincronização com banco em < 200ms
+
+Sem travamentos ou lags perceptíveis
+
+✅ Confiabilidade
+
+Zero perda de dados em caso de erro de rede
+
+Rollback automático em falhas
+
+Logs claros para debugging
+
+✅ Código
+
+Sem IDs hardcoded (exceto migrations)
+
+TypeScript sem any types
+
+Funções documentadas com JSDoc
+
+Tratamento de erros em 100% das async functions
+
+SCRIPTS SQL PARA EXECUTAR
+Forneça os scripts SQL completos necessários para:
+
+Criar/alterar tabelas
+
+Adicionar índices
+
+Configurar RLS policies
+
+Criar stored procedures
+
+Formato esperado:
+
+sql
+-- Migration: Add column ordering support
+-- Execute no Supabase SQL Editor
+
+BEGIN;
+
+-- (SQL aqui)
+
+COMMIT;
+INSTRUÇÕES FINAIS
+Analise TODO o código antes de fazer alterações
+
+Execute as mudanças em ordem (macro-steps sequenciais)
+
+Teste cada etapa antes de prosseguir
+
+Documente alterações críticas com comentários
+
+Crie checkpoints após cada macro-step concluído
+
+Reporte problemas encontrados com contexto completo
+
+Modo de execução: Sistemático, meticuloso e com máxima precisão. Não pule etapas nem faça suposições sobre o estado atual do código.

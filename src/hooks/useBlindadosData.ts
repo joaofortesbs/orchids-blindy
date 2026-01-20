@@ -38,6 +38,8 @@ export function useBlindadosData() {
   
   const dataRef = useRef(data);
   const loadingRef = useRef(false);
+  const pendingOperationsRef = useRef(0);
+  const lastSyncTimeRef = useRef(0);
   const servicesRef = useRef<{ kanban: KanbanService | null; pomodoro: PomodoroService | null }>({
     kanban: null,
     pomodoro: null,
@@ -57,8 +59,19 @@ export function useBlindadosData() {
     }
   }, [user, supabase]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (force: boolean = false) => {
     if (!user || loadingRef.current) return;
+    
+    if (!force && pendingOperationsRef.current > 0) {
+      console.log('[useBlindadosData] loadData: Skipping - pending operations:', pendingOperationsRef.current);
+      return;
+    }
+    
+    const now = Date.now();
+    if (!force && now - lastSyncTimeRef.current < 5000) {
+      console.log('[useBlindadosData] loadData: Skipping - too soon since last sync');
+      return;
+    }
     
     const kanbanService = servicesRef.current.kanban;
     const pomodoroService = servicesRef.current.pomodoro;
@@ -69,6 +82,7 @@ export function useBlindadosData() {
     setIsSyncing(true);
 
     try {
+      console.log('[useBlindadosData] loadData: Loading from database...');
       const [columns, pomodoroData] = await Promise.all([
         kanbanService.loadColumns(),
         pomodoroService.loadData(),
@@ -82,8 +96,10 @@ export function useBlindadosData() {
 
       setData(newData);
       setCache(newData);
+      lastSyncTimeRef.current = Date.now();
+      console.log('[useBlindadosData] loadData: Success - loaded', columns.length, 'columns');
     } catch (e) {
-      console.error('Load error:', e);
+      console.error('[useBlindadosData] loadData error:', e);
     } finally {
       setIsLoaded(true);
       setIsSyncing(false);
@@ -99,7 +115,7 @@ export function useBlindadosData() {
     }
     
     if (user) {
-      const timer = setTimeout(loadData, 100);
+      const timer = setTimeout(() => loadData(true), 100);
       return () => clearTimeout(timer);
     } else {
       setIsLoaded(true);
@@ -108,20 +124,22 @@ export function useBlindadosData() {
 
   useEffect(() => {
     if (!user) return;
-    const interval = setInterval(loadData, 30000);
+    const interval = setInterval(() => {
+      if (pendingOperationsRef.current === 0) {
+        loadData(false);
+      }
+    }, 60000);
     return () => clearInterval(interval);
   }, [user, loadData]);
 
   const addKanbanColumn = useCallback(async (title: string) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) {
-      console.error('addKanbanColumn: service not available');
+      console.error('[useBlindadosData] addKanbanColumn: service not available');
       return;
     }
     
     const position = dataRef.current.kanban.columns.length;
-    
-    // Create optimistic column with temporary ID
     const tempId = `temp-col-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const optimisticColumn: KanbanColumn = {
       id: tempId,
@@ -129,7 +147,9 @@ export function useBlindadosData() {
       cards: [],
     };
     
-    // Optimistic update - instantly show the column
+    pendingOperationsRef.current++;
+    console.log('[useBlindadosData] addKanbanColumn: Starting - pending ops:', pendingOperationsRef.current);
+    
     setData(prev => {
       const updated = {
         ...prev,
@@ -144,7 +164,7 @@ export function useBlindadosData() {
       const newColumn = await kanbanService.addColumn(title, position);
       
       if (newColumn) {
-        // Replace temporary column with real column from database
+        console.log('[useBlindadosData] addKanbanColumn: SUCCESS - replacing temp ID with:', newColumn.id);
         setData(prev => {
           const updated = {
             ...prev,
@@ -159,7 +179,7 @@ export function useBlindadosData() {
           return updated;
         });
       } else {
-        // Failed - remove optimistic column
+        console.error('[useBlindadosData] addKanbanColumn: FAILED - removing optimistic column');
         setData(prev => {
           const updated = {
             ...prev,
@@ -171,8 +191,7 @@ export function useBlindadosData() {
         });
       }
     } catch (e) {
-      console.error('addKanbanColumn error:', e);
-      // Remove optimistic column on error
+      console.error('[useBlindadosData] addKanbanColumn error:', e);
       setData(prev => {
         const updated = {
           ...prev,
@@ -182,12 +201,19 @@ export function useBlindadosData() {
         setCache(updated);
         return updated;
       });
+    } finally {
+      pendingOperationsRef.current--;
+      console.log('[useBlindadosData] addKanbanColumn: Done - pending ops:', pendingOperationsRef.current);
     }
   }, []);
 
   const deleteKanbanColumn = useCallback(async (columnId: string) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
+    
+    const previousColumns = dataRef.current.kanban.columns;
+    
+    pendingOperationsRef.current++;
     
     setData(prev => {
       const updated = {
@@ -200,29 +226,49 @@ export function useBlindadosData() {
     });
     
     try {
-      await kanbanService.deleteColumn(columnId);
+      const success = await kanbanService.deleteColumn(columnId);
+      if (!success) {
+        console.error('[useBlindadosData] deleteKanbanColumn: FAILED - restoring column');
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        console.log('[useBlindadosData] deleteKanbanColumn: SUCCESS');
+      }
     } catch (e) {
-      console.error('deleteKanbanColumn error:', e);
+      console.error('[useBlindadosData] deleteKanbanColumn error:', e);
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+    } finally {
+      pendingOperationsRef.current--;
     }
   }, []);
 
   const addKanbanCard = useCallback(async (columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) {
-      console.error('addKanbanCard: service not available');
+      console.error('[useBlindadosData] addKanbanCard: service not available');
+      return;
+    }
+    
+    if (columnId.startsWith('temp-')) {
+      console.error('[useBlindadosData] addKanbanCard: Cannot add card to temporary column');
       return;
     }
     
     const column = dataRef.current.kanban.columns.find(c => c.id === columnId);
     if (!column) {
-      console.error('addKanbanCard: column not found:', columnId);
+      console.error('[useBlindadosData] addKanbanCard: column not found:', columnId);
       return;
     }
     
     const position = column.cards.length;
     const now = new Date().toISOString();
-    
-    // Create optimistic card with temporary ID for instant UI update
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const optimisticCard: KanbanCard = {
       id: tempId,
@@ -235,7 +281,8 @@ export function useBlindadosData() {
       updatedAt: now,
     };
     
-    // Optimistic update - instantly show the card
+    pendingOperationsRef.current++;
+    
     setData(prev => {
       const updated = {
         ...prev,
@@ -250,12 +297,11 @@ export function useBlindadosData() {
       return updated;
     });
     
-    // Save to database in background
     try {
       const newCard = await kanbanService.addCard(columnId, card, position);
       
       if (newCard) {
-        // Replace temporary card with real card from database
+        console.log('[useBlindadosData] addKanbanCard: SUCCESS - replacing temp ID with:', newCard.id);
         setData(prev => {
           const updated = {
             ...prev,
@@ -274,7 +320,7 @@ export function useBlindadosData() {
           return updated;
         });
       } else {
-        // Failed to save - remove the optimistic card
+        console.error('[useBlindadosData] addKanbanCard: FAILED - removing optimistic card');
         setData(prev => {
           const updated = {
             ...prev,
@@ -292,8 +338,7 @@ export function useBlindadosData() {
         });
       }
     } catch (e) {
-      console.error('addKanbanCard error:', e);
-      // Remove optimistic card on error
+      console.error('[useBlindadosData] addKanbanCard error:', e);
       setData(prev => {
         const updated = {
           ...prev,
@@ -309,6 +354,8 @@ export function useBlindadosData() {
         setCache(updated);
         return updated;
       });
+    } finally {
+      pendingOperationsRef.current--;
     }
   }, []);
 
@@ -316,7 +363,15 @@ export function useBlindadosData() {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
     
-    // Optimistic update
+    if (cardId.startsWith('temp-')) {
+      console.log('[useBlindadosData] updateKanbanCard: Skipping temp card');
+      return;
+    }
+    
+    const previousColumns = dataRef.current.kanban.columns;
+    
+    pendingOperationsRef.current++;
+    
     setData(prev => {
       const updated = {
         ...prev,
@@ -341,20 +396,52 @@ export function useBlindadosData() {
     try {
       const success = await kanbanService.updateCard(cardId, updates);
       if (!success) {
-        // If failed, reload data to sync with server
-        loadData();
+        console.error('[useBlindadosData] updateKanbanCard: FAILED - restoring previous state');
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        console.log('[useBlindadosData] updateKanbanCard: SUCCESS');
       }
     } catch (e) {
-      console.error('updateKanbanCard error:', e);
-      loadData();
+      console.error('[useBlindadosData] updateKanbanCard error:', e);
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+    } finally {
+      pendingOperationsRef.current--;
     }
-  }, [loadData]);
+  }, []);
 
   const deleteKanbanCard = useCallback(async (columnId: string, cardId: string) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
     
-    // Optimistic delete
+    if (cardId.startsWith('temp-')) {
+      setData(prev => {
+        const updated = {
+          ...prev,
+          kanban: {
+            columns: prev.kanban.columns.map(c =>
+              c.id === columnId ? { ...c, cards: c.cards.filter(card => card.id !== cardId) } : c
+            ),
+          },
+          lastUpdated: new Date().toISOString(),
+        };
+        setCache(updated);
+        return updated;
+      });
+      return;
+    }
+    
+    const previousColumns = dataRef.current.kanban.columns;
+    
+    pendingOperationsRef.current++;
+    
     setData(prev => {
       const updated = {
         ...prev,
@@ -372,20 +459,37 @@ export function useBlindadosData() {
     try {
       const success = await kanbanService.deleteCard(cardId);
       if (!success) {
-        loadData();
+        console.error('[useBlindadosData] deleteKanbanCard: FAILED - restoring card');
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        console.log('[useBlindadosData] deleteKanbanCard: SUCCESS');
       }
     } catch (e) {
-      console.error('deleteKanbanCard error:', e);
-      loadData();
+      console.error('[useBlindadosData] deleteKanbanCard error:', e);
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+    } finally {
+      pendingOperationsRef.current--;
     }
-  }, [loadData]);
+  }, []);
 
   const moveCard = useCallback(async (cardId: string, sourceColId: string, targetColId: string, targetIdx: number) => {
     console.log('[useBlindadosData] moveCard called:', { cardId, sourceColId, targetColId, targetIdx });
     
-    // Check if target column has a temporary ID (not yet persisted)
     if (targetColId.startsWith('temp-')) {
-      console.error('[useBlindadosData] moveCard: Cannot move to temporary column. Wait for column to be saved first.');
+      console.error('[useBlindadosData] moveCard: Cannot move to temporary column');
+      return;
+    }
+    
+    if (cardId.startsWith('temp-')) {
+      console.error('[useBlindadosData] moveCard: Cannot move temporary card');
       return;
     }
     
@@ -395,28 +499,30 @@ export function useBlindadosData() {
       return;
     }
     
-    const card = dataRef.current.kanban.columns.find(c => c.id === sourceColId)?.cards.find(c => c.id === cardId);
+    const previousColumns = dataRef.current.kanban.columns;
+    const card = previousColumns.find(c => c.id === sourceColId)?.cards.find(c => c.id === cardId);
     if (!card) {
       console.error('[useBlindadosData] moveCard: Card not found', { cardId, sourceColId });
       return;
     }
     
-    console.log('[useBlindadosData] moveCard: Card found:', { cardTitle: card.title, cardId: card.id });
-
     let updatedSourceCards: { id: string; position: number }[] = [];
     let updatedTargetCards: { id: string; position: number }[] = [];
+
+    pendingOperationsRef.current++;
+    console.log('[useBlindadosData] moveCard: Starting - pending ops:', pendingOperationsRef.current);
 
     setData(prev => {
       const newCols = prev.kanban.columns.map(c => {
         if (c.id === sourceColId) {
           const newCards = c.cards.filter(card => card.id !== cardId);
-          updatedSourceCards = newCards.map((card, i) => ({ id: card.id, position: i }));
+          updatedSourceCards = newCards.filter(card => !card.id.startsWith('temp-')).map((card, i) => ({ id: card.id, position: i }));
           return { ...c, cards: newCards };
         }
         if (c.id === targetColId) {
           const list = [...c.cards];
           list.splice(targetIdx, 0, card);
-          updatedTargetCards = list.map((card, i) => ({ id: card.id, position: i }));
+          updatedTargetCards = list.filter(card => !card.id.startsWith('temp-')).map((card, i) => ({ id: card.id, position: i }));
           return { ...c, cards: list };
         }
         return c;
@@ -426,37 +532,54 @@ export function useBlindadosData() {
       return updated;
     });
 
-    console.log('[useBlindadosData] moveCard: Persisting to database...', {
-      sourceColId,
-      targetColId,
-      sourceCards: updatedSourceCards,
-      targetCards: updatedTargetCards,
-    });
+    console.log('[useBlindadosData] moveCard: Persisting to database...');
     
     try {
       const [sourceResult, targetResult] = await Promise.all([
-        kanbanService.updateCardPositions(sourceColId, updatedSourceCards),
-        kanbanService.updateCardPositions(targetColId, updatedTargetCards),
+        updatedSourceCards.length > 0 ? kanbanService.updateCardPositions(sourceColId, updatedSourceCards) : Promise.resolve(true),
+        updatedTargetCards.length > 0 ? kanbanService.updateCardPositions(targetColId, updatedTargetCards) : Promise.resolve(true),
       ]);
       
       console.log('[useBlindadosData] moveCard: Persistence results:', { sourceResult, targetResult });
       
       if (!sourceResult || !targetResult) {
-        console.error('[useBlindadosData] moveCard: Failed to persist - reloading data');
-        loadData();
+        console.error('[useBlindadosData] moveCard: FAILED - restoring previous state');
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        console.log('[useBlindadosData] moveCard: SUCCESS');
       }
     } catch (e) {
       console.error('[useBlindadosData] moveCard error:', e);
-      loadData();
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+    } finally {
+      pendingOperationsRef.current--;
+      console.log('[useBlindadosData] moveCard: Done - pending ops:', pendingOperationsRef.current);
     }
-  }, [loadData]);
+  }, []);
 
   const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string }) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) {
-      console.error('updateKanbanColumn: service not available');
+      console.error('[useBlindadosData] updateKanbanColumn: service not available');
       return;
     }
+    
+    if (columnId.startsWith('temp-')) {
+      console.log('[useBlindadosData] updateKanbanColumn: Skipping temp column');
+      return;
+    }
+    
+    const previousColumns = dataRef.current.kanban.columns;
+    
+    pendingOperationsRef.current++;
     
     setData(prev => {
       const updated = {
@@ -475,10 +598,24 @@ export function useBlindadosData() {
     try {
       const success = await kanbanService.updateColumn(columnId, updates);
       if (!success) {
-        console.error('updateKanbanColumn: failed to persist to database');
+        console.error('[useBlindadosData] updateKanbanColumn: FAILED - restoring previous state');
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        console.log('[useBlindadosData] updateKanbanColumn: SUCCESS');
       }
     } catch (e) {
-      console.error('updateKanbanColumn error:', e);
+      console.error('[useBlindadosData] updateKanbanColumn error:', e);
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+    } finally {
+      pendingOperationsRef.current--;
     }
   }, []);
 
@@ -491,51 +628,56 @@ export function useBlindadosData() {
       return;
     }
     
-    // Filter out temporary columns that haven't been saved yet
     const validColumns = columns.filter(c => !c.id.startsWith('temp-'));
     const hasTemporaryColumns = columns.some(c => c.id.startsWith('temp-'));
     
     if (hasTemporaryColumns) {
-      console.log('[useBlindadosData] updateKanbanColumns: Has temporary columns, skipping persistence');
+      console.log('[useBlindadosData] updateKanbanColumns: Has temporary columns, only updating UI');
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+      return;
     }
     
-    // Store previous state for rollback
     const previousColumns = dataRef.current.kanban.columns;
     
-    // Optimistic update - instantly show new column order
-    console.log('[useBlindadosData] updateKanbanColumns: Applying optimistic update');
+    pendingOperationsRef.current++;
+    console.log('[useBlindadosData] updateKanbanColumns: Starting - pending ops:', pendingOperationsRef.current);
+    
     setData(prev => {
       const updated = { ...prev, kanban: { columns }, lastUpdated: new Date().toISOString() };
       setCache(updated);
       return updated;
     });
 
-    // Only persist if all columns have valid IDs
-    if (hasTemporaryColumns) return;
-
-    console.log('[useBlindadosData] updateKanbanColumns: Persisting', validColumns.length, 'columns to database');
-    console.log('[useBlindadosData] updateKanbanColumns: Column data:', JSON.stringify(validColumns.map((c, i) => ({ id: c.id, position: i }))));
+    console.log('[useBlindadosData] updateKanbanColumns: Persisting', validColumns.length, 'columns');
     
     try {
       const success = await kanbanService.updateColumnPositions(validColumns.map((c, i) => ({ id: c.id, position: i })));
       console.log('[useBlindadosData] updateKanbanColumns: Persistence result:', success);
+      
       if (!success) {
-        // Rollback on failure
-        console.error('[useBlindadosData] updateKanbanColumns: Rolling back due to failure');
+        console.error('[useBlindadosData] updateKanbanColumns: FAILED - restoring previous state');
         setData(prev => {
           const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
           setCache(updated);
           return updated;
         });
+      } else {
+        console.log('[useBlindadosData] updateKanbanColumns: SUCCESS');
       }
     } catch (e) {
       console.error('[useBlindadosData] updateKanbanColumns error:', e);
-      // Rollback on error
       setData(prev => {
         const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
+    } finally {
+      pendingOperationsRef.current--;
+      console.log('[useBlindadosData] updateKanbanColumns: Done - pending ops:', pendingOperationsRef.current);
     }
   }, []);
 
@@ -546,42 +688,52 @@ export function useBlindadosData() {
       return;
     }
 
-    // Skip if column is temporary (not yet persisted)
     if (columnId.startsWith('temp-')) {
       console.log('[useBlindadosData] updateCardPositions: Skipping - column is temporary');
       return;
     }
     
-    // Filter out temporary cards
     const persistableCards = cards.filter(c => !c.id.startsWith('temp-'));
     if (persistableCards.length === 0) {
       console.log('[useBlindadosData] updateCardPositions: No persistable cards');
       return;
     }
     
-    if (persistableCards.length !== cards.length) {
-      console.log('[useBlindadosData] updateCardPositions: Filtered out', cards.length - persistableCards.length, 'temporary cards');
-    }
-
-    console.log('[useBlindadosData] updateCardPositions: Persisting', persistableCards.length, 'card positions in column', columnId);
+    const previousColumns = dataRef.current.kanban.columns;
+    
+    pendingOperationsRef.current++;
+    console.log('[useBlindadosData] updateCardPositions: Persisting', persistableCards.length, 'cards');
 
     try {
       const success = await kanbanService.updateCardPositions(columnId, persistableCards.map((c, i) => ({ id: c.id, position: i })));
       console.log('[useBlindadosData] updateCardPositions: Persistence result:', success);
+      
       if (!success) {
-        console.error('[useBlindadosData] updateCardPositions: Failed to persist - reloading data');
-        loadData();
+        console.error('[useBlindadosData] updateCardPositions: FAILED - restoring previous state');
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        console.log('[useBlindadosData] updateCardPositions: SUCCESS');
       }
     } catch (e) {
       console.error('[useBlindadosData] updateCardPositions error:', e);
-      loadData();
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
+    } finally {
+      pendingOperationsRef.current--;
     }
-  }, [loadData]);
+  }, []);
 
   const addPomodoroSession = useCallback(async (session: Omit<PomodoroSession, 'id'>) => {
     const pomodoroService = servicesRef.current.pomodoro;
     if (!pomodoroService) {
-      console.error('addPomodoroSession: service not available');
+      console.error('[useBlindadosData] addPomodoroSession: service not available');
       return;
     }
     
@@ -602,14 +754,14 @@ export function useBlindadosData() {
         });
       }
     } catch (e) {
-      console.error('addPomodoroSession error:', e);
+      console.error('[useBlindadosData] addPomodoroSession error:', e);
     }
   }, []);
 
   const updatePomodoroSettings = useCallback(async (settings: PomodoroSettings) => {
     const pomodoroService = servicesRef.current.pomodoro;
     if (!pomodoroService) {
-      console.error('updatePomodoroSettings: service not available');
+      console.error('[useBlindadosData] updatePomodoroSettings: service not available');
       return;
     }
     
@@ -622,7 +774,7 @@ export function useBlindadosData() {
     try {
       await pomodoroService.updateSettings(settings);
     } catch (e) {
-      console.error('updatePomodoroSettings error:', e);
+      console.error('[useBlindadosData] updatePomodoroSettings error:', e);
     }
   }, []);
 
@@ -658,6 +810,6 @@ export function useBlindadosData() {
     updateCardPositions,
     addPomodoroSession,
     updatePomodoroSettings,
-    forceSync: loadData,
+    forceSync: () => loadData(true),
   };
 }

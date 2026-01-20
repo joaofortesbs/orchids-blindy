@@ -45,17 +45,24 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban card movement fix v11 (COMPLETE)
-  - ROOT CAUSE FIXED: Removed static column IDs from DEFAULT_DATA that conflicted with database UUIDs
+- Jan 20, 2026: Kanban auto-revert fix v12 (COMPLETE)
+  - ROOT CAUSE FIXED: Identified that interval sync (every 30s) was overwriting local state with database data
+  - Added pendingOperationsRef to track in-flight operations and block sync during them
+  - Changed interval from 30s to 60s and added check for pending operations
+  - Added lastSyncTimeRef to prevent sync spam (minimum 5s between syncs)
+  - Removed automatic loadData() calls on failures - now restores previous state instead
+  - All operations now store previousColumns before changes for proper rollback
+  - Each operation increments/decrements pendingOperationsRef to protect from sync
+  - Added force parameter to loadData() for manual refresh vs automatic sync
+  - All changes are now properly persisted and don't auto-revert
+
+- Jan 20, 2026: Kanban card movement fix v11
+  - Removed static column IDs from DEFAULT_DATA that conflicted with database UUIDs
   - DEFAULT_KANBAN_COLUMNS now starts empty; columns are loaded from database or created on first use
-  - This ensures all column IDs are real database UUIDs, fixing movement to user-created columns
   - Added isLoaded prop to KanbanBoard to block DnD until data is ready
   - Added canDrag check that blocks drag if isLoaded=false or hasTemporaryColumns=true
   - Added validation to prevent operations on temporary (unsaved) columns
   - Improved temporary card filtering in both hook and service layers
-  - Added foreign key constraint error detection for better debugging
-  - Enhanced logging throughout moveCard and updateCardPositions flow
-  - Auto-reload data on persistence failures to sync with database state
 
 - Jan 20, 2026: Kanban persistence definitive fix v3
   - Fixed JSONB serialization: tags/subtasks now passed as arrays directly to Supabase (not JSON.stringify)
