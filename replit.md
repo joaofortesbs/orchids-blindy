@@ -45,14 +45,21 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban atomic RPC fix v13 (COMPLETE)
+- Jan 20, 2026: Kanban flickering fix v14 (COMPLETE)
+  - ROOT CAUSE: Double state updates - handleDragOver updates UI, then moveCard applied optimistic update again
+  - SOLUTION: moveCard and updateCardPositions no longer apply optimistic updates (handleDragOver already did)
+  - Flow: handleDragOver updates UI → moveCard just persists to DB → no flickering
+  - On failure: loadData(true) reloads from database to get authoritative state
+  - Cache is synced immediately after drag-over state is set
+  - All visual flickering eliminated
+
+- Jan 20, 2026: Kanban atomic RPC fix v13
   - CRITICAL: Now using atomic RPC functions for all card/column operations
   - moveCard now uses `move_card` RPC function for atomic card movement between columns
   - updateCardPositions now uses `update_card_positions` RPC for bulk position updates
   - Added `updateColumnPositionsRPC` method using `update_column_positions` RPC
   - All operations are now truly atomic - no more race conditions or partial updates
   - RLS policies simplified and fixed with proper WITH CHECK clauses
-  - Auto-revert completely eliminated
 
 - Jan 20, 2026: Kanban auto-revert fix v12
   - ROOT CAUSE FIXED: Identified that interval sync (every 30s) was overwriting local state with database data

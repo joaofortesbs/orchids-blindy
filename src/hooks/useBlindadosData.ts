@@ -499,35 +499,34 @@ export function useBlindadosData() {
       return;
     }
     
-    const previousColumns = dataRef.current.kanban.columns;
-    const sourceColumn = previousColumns.find(c => c.id === sourceColId);
-    const card = sourceColumn?.cards.find(c => c.id === cardId);
+    // IMPORTANT: State is already updated by handleDragOver via onColumnsChange
+    // We capture current state (which is the DESIRED final state) for cache sync
+    // and previous state (from sourceColId) for rollback if RPC fails
+    const currentColumns = dataRef.current.kanban.columns;
+    
+    // Find the card in the TARGET column (where dragOver already moved it)
+    const targetColumn = currentColumns.find(c => c.id === targetColId);
+    const card = targetColumn?.cards.find(c => c.id === cardId);
     
     if (!card) {
-      console.error('[useBlindadosData] moveCard: Card not found', { cardId, sourceColId });
-      return;
+      console.error('[useBlindadosData] moveCard: Card not found in target column - checking source', { cardId, targetColId });
+      // Fallback: card might still be in source if dragOver didn't fire
+      const sourceColumn = currentColumns.find(c => c.id === sourceColId);
+      const cardInSource = sourceColumn?.cards.find(c => c.id === cardId);
+      if (!cardInSource) {
+        console.error('[useBlindadosData] moveCard: Card not found anywhere');
+        return;
+      }
     }
     
     pendingOperationsRef.current++;
     console.log('[useBlindadosData] moveCard: Starting - pending ops:', pendingOperationsRef.current);
 
-    // CRITICAL: Apply optimistic update BEFORE RPC call for instant UI response
-    const optimisticColumns = previousColumns.map(col => {
-      if (col.id === sourceColId) {
-        return { ...col, cards: col.cards.filter(c => c.id !== cardId) };
-      }
-      if (col.id === targetColId) {
-        const newCards = [...col.cards];
-        newCards.splice(targetIdx, 0, card);
-        return { ...col, cards: newCards };
-      }
-      return col;
-    });
-    
+    // NO optimistic update here - handleDragOver already updated the UI
+    // Just sync cache with current (already correct) state
     setData(prev => {
-      const updated = { ...prev, kanban: { columns: optimisticColumns }, lastUpdated: new Date().toISOString() };
-      setCache(updated);
-      return updated;
+      setCache(prev);
+      return prev;
     });
 
     console.log('[useBlindadosData] moveCard: Using atomic RPC move_card...');
@@ -538,32 +537,21 @@ export function useBlindadosData() {
       console.log('[useBlindadosData] moveCard: RPC result:', success);
       
       if (!success) {
-        console.error('[useBlindadosData] moveCard: FAILED - restoring previous state');
-        setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
-          setCache(updated);
-          return updated;
-        });
+        console.error('[useBlindadosData] moveCard: FAILED - need to reload from database');
+        // On failure, reload from database to get authoritative state
+        await loadData(true);
       } else {
-        console.log('[useBlindadosData] moveCard: SUCCESS - state already updated optimistically');
-        // State is already correct from optimistic update, just ensure cache is synced
-        setData(prev => {
-          setCache(prev);
-          return prev;
-        });
+        console.log('[useBlindadosData] moveCard: SUCCESS - persisted to database');
       }
     } catch (e) {
       console.error('[useBlindadosData] moveCard error:', e);
-      setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
-        setCache(updated);
-        return updated;
-      });
+      // On error, reload from database
+      await loadData(true);
     } finally {
       pendingOperationsRef.current--;
       console.log('[useBlindadosData] moveCard: Done - pending ops:', pendingOperationsRef.current);
     }
-  }, []);
+  }, [loadData]);
 
   const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string }) => {
     const kanbanService = servicesRef.current.kanban;
@@ -699,24 +687,14 @@ export function useBlindadosData() {
       return;
     }
     
-    const previousColumns = dataRef.current.kanban.columns;
-    
     pendingOperationsRef.current++;
     console.log('[useBlindadosData] updateCardPositions: Starting - pending ops:', pendingOperationsRef.current);
 
-    // CRITICAL: Apply optimistic update to commit the new card order
+    // NO optimistic update here - handleDragOver already updated the UI
+    // Just sync cache with current (already correct) state
     setData(prev => {
-      const updated = {
-        ...prev,
-        kanban: {
-          columns: prev.kanban.columns.map(col =>
-            col.id === columnId ? { ...col, cards } : col
-          ),
-        },
-        lastUpdated: new Date().toISOString(),
-      };
-      setCache(updated);
-      return updated;
+      setCache(prev);
+      return prev;
     });
 
     console.log('[useBlindadosData] updateCardPositions: Persisting', persistableCards.length, 'cards');
@@ -726,32 +704,19 @@ export function useBlindadosData() {
       console.log('[useBlindadosData] updateCardPositions: Persistence result:', success);
       
       if (!success) {
-        console.error('[useBlindadosData] updateCardPositions: FAILED - restoring previous state');
-        setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
-          setCache(updated);
-          return updated;
-        });
+        console.error('[useBlindadosData] updateCardPositions: FAILED - reloading from database');
+        await loadData(true);
       } else {
-        console.log('[useBlindadosData] updateCardPositions: SUCCESS');
-        // Ensure cache is synced after successful RPC
-        setData(prev => {
-          setCache(prev);
-          return prev;
-        });
+        console.log('[useBlindadosData] updateCardPositions: SUCCESS - persisted to database');
       }
     } catch (e) {
       console.error('[useBlindadosData] updateCardPositions error:', e);
-      setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
-        setCache(updated);
-        return updated;
-      });
+      await loadData(true);
     } finally {
       pendingOperationsRef.current--;
       console.log('[useBlindadosData] updateCardPositions: Done - pending ops:', pendingOperationsRef.current);
     }
-  }, []);
+  }, [loadData]);
 
   const addPomodoroSession = useCallback(async (session: Omit<PomodoroSession, 'id'>) => {
     const pomodoroService = servicesRef.current.pomodoro;
