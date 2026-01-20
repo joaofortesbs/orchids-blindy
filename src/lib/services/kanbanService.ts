@@ -158,7 +158,7 @@ export class KanbanService {
       if (updates.tags !== undefined) dbUpdates.tags = updates.tags; // JSONB - pass array directly
       if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks; // JSONB - pass array directly
 
-      console.log('KanbanService.updateCard: Updating card', cardId, 'with:', dbUpdates);
+      console.log('KanbanService.updateCard: userId=', this.userId, 'cardId=', cardId, 'updates=', dbUpdates);
 
       const { data, error } = await this.supabase
         .from('kanban_cards')
@@ -172,7 +172,15 @@ export class KanbanService {
         return false;
       }
       
-      console.log('KanbanService.updateCard: Success, updated rows:', data?.length || 0);
+      const rowsAffected = data?.length || 0;
+      console.log('KanbanService.updateCard: rowsAffected=', rowsAffected);
+      
+      // If no rows were affected, the update failed (likely RLS or card not found)
+      if (rowsAffected === 0) {
+        console.error('KanbanService.updateCard: No rows affected - card not found or RLS denied');
+        return false;
+      }
+      
       return true;
     } catch (e) {
       console.error('KanbanService.updateCard exception:', e);
@@ -182,9 +190,9 @@ export class KanbanService {
 
   async deleteCard(cardId: string): Promise<boolean> {
     try {
-      console.log('KanbanService.deleteCard: Deleting card', cardId);
+      console.log('KanbanService.deleteCard: userId=', this.userId, 'cardId=', cardId);
       
-      const { data, error, count } = await this.supabase
+      const { data, error } = await this.supabase
         .from('kanban_cards')
         .delete()
         .eq('id', cardId)
@@ -196,7 +204,15 @@ export class KanbanService {
         return false;
       }
       
-      console.log('KanbanService.deleteCard: Success, deleted rows:', data?.length || 0);
+      const rowsAffected = data?.length || 0;
+      console.log('KanbanService.deleteCard: rowsAffected=', rowsAffected);
+      
+      // If no rows were affected, the delete failed (likely RLS or card not found)
+      if (rowsAffected === 0) {
+        console.error('KanbanService.deleteCard: No rows affected - card not found or RLS denied');
+        return false;
+      }
+      
       return true;
     } catch (e) {
       console.error('KanbanService.deleteCard exception:', e);
