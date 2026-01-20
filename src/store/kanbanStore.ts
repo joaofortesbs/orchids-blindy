@@ -180,24 +180,28 @@ export const useKanbanStore = create<KanbanState>()(
             } catch (error) {
               console.error('[KanbanStore] Operation failed:', op, error);
               
-              set((state) => ({
-                queue: state.queue.map(q => {
-                  if ((q.type === 'move' && q.data.id === op.data.id) ||
-                      (q.type === 'reorder' && q.data.id === op.data.id)) {
-                    const newRetries = q.data.retries + 1;
-                    if (newRetries >= MAX_RETRIES) {
-                      console.error('[KanbanStore] Max retries reached, dropping operation:', op);
-                      get().failOperation(op.data.id);
-                      return q;
+              const newRetries = op.data.retries + 1;
+              if (newRetries >= MAX_RETRIES) {
+                console.error('[KanbanStore] Max retries reached, dropping operation:', op);
+                get().failOperation(op.data.id);
+              } else {
+                set((state) => {
+                  const updatedQueue: PendingOperation[] = state.queue.map(q => {
+                    if (q.data.id === op.data.id) {
+                      if (q.type === 'move') {
+                        return { type: 'move' as const, data: { ...q.data, retries: newRetries } };
+                      } else {
+                        return { type: 'reorder' as const, data: { ...q.data, retries: newRetries } };
+                      }
                     }
-                    return { ...q, data: { ...q.data, retries: newRetries } };
-                  }
-                  return q;
-                }),
-              }));
-              
-              const retryDelay = RETRY_DELAY_BASE * Math.pow(2, op.data.retries);
-              await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    return q;
+                  });
+                  return { queue: updatedQueue };
+                });
+                
+                const retryDelay = RETRY_DELAY_BASE * Math.pow(2, op.data.retries);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+              }
             }
           }
           

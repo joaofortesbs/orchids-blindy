@@ -493,64 +493,52 @@ export function useBlindadosData() {
       return;
     }
     
-    const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) {
-      console.error('[useBlindadosData] moveCard: kanbanService not available');
-      return;
-    }
-    
-    // IMPORTANT: State is already updated by handleDragOver via onColumnsChange
-    // We capture current state (which is the DESIRED final state) for cache sync
-    // and previous state (from sourceColId) for rollback if RPC fails
-    const currentColumns = dataRef.current.kanban.columns;
-    
-    // Find the card in the TARGET column (where dragOver already moved it)
-    const targetColumn = currentColumns.find(c => c.id === targetColId);
-    const card = targetColumn?.cards.find(c => c.id === cardId);
-    
-    if (!card) {
-      console.error('[useBlindadosData] moveCard: Card not found in target column - checking source', { cardId, targetColId });
-      // Fallback: card might still be in source if dragOver didn't fire
-      const sourceColumn = currentColumns.find(c => c.id === sourceColId);
-      const cardInSource = sourceColumn?.cards.find(c => c.id === cardId);
-      if (!cardInSource) {
-        console.error('[useBlindadosData] moveCard: Card not found anywhere');
-        return;
-      }
-    }
-    
     pendingOperationsRef.current++;
     console.log('[useBlindadosData] moveCard: Starting - pending ops:', pendingOperationsRef.current);
 
-    // NO optimistic update here - handleDragOver already updated the UI
-    // Just sync cache with current (already correct) state
     setData(prev => {
       setCache(prev);
       return prev;
     });
 
-    console.log('[useBlindadosData] moveCard: Using atomic RPC move_card...');
+    console.log('[useBlindadosData] moveCard: Using API route for atomic persistence...');
     
-    try {
-      const success = await kanbanService.moveCard(cardId, targetColId, targetIdx);
-      
-      console.log('[useBlindadosData] moveCard: RPC result:', success);
-      
-      if (!success) {
-        console.error('[useBlindadosData] moveCard: FAILED - need to reload from database');
-        // On failure, reload from database to get authoritative state
-        await loadData(true);
-      } else {
-        console.log('[useBlindadosData] moveCard: SUCCESS - persisted to database');
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await fetch('/api/kanban/move-card', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cardId, targetColumnId: targetColId, position: targetIdx }),
+        });
+        
+        if (res.ok) {
+          const result = await res.json();
+          console.log('[useBlindadosData] moveCard: SUCCESS on attempt', attempt, result);
+          pendingOperationsRef.current--;
+          return;
+        }
+        
+        const errorData = await res.json().catch(() => ({}));
+        lastError = new Error(`HTTP ${res.status}: ${errorData.error || 'Unknown error'}`);
+        console.warn('[useBlindadosData] moveCard: Attempt', attempt, 'failed:', lastError.message);
+        
+      } catch (e) {
+        lastError = e as Error;
+        console.warn('[useBlindadosData] moveCard: Attempt', attempt, 'error:', e);
       }
-    } catch (e) {
-      console.error('[useBlindadosData] moveCard error:', e);
-      // On error, reload from database
-      await loadData(true);
-    } finally {
-      pendingOperationsRef.current--;
-      console.log('[useBlindadosData] moveCard: Done - pending ops:', pendingOperationsRef.current);
+      
+      if (attempt < MAX_RETRIES) {
+        const delay = 500 * Math.pow(2, attempt - 1);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
+    
+    console.error('[useBlindadosData] moveCard: All retries failed:', lastError);
+    await loadData(true);
+    pendingOperationsRef.current--;
   }, [loadData]);
 
   const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string }) => {
@@ -670,12 +658,6 @@ export function useBlindadosData() {
   }, []);
 
   const updateCardPositions = useCallback(async (columnId: string, cards: KanbanCard[]) => {
-    const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) {
-      console.error('[useBlindadosData] updateCardPositions: service not available');
-      return;
-    }
-
     if (columnId.startsWith('temp-')) {
       console.log('[useBlindadosData] updateCardPositions: Skipping - column is temporary');
       return;
@@ -690,32 +672,50 @@ export function useBlindadosData() {
     pendingOperationsRef.current++;
     console.log('[useBlindadosData] updateCardPositions: Starting - pending ops:', pendingOperationsRef.current);
 
-    // NO optimistic update here - handleDragOver already updated the UI
-    // Just sync cache with current (already correct) state
     setData(prev => {
       setCache(prev);
       return prev;
     });
 
-    console.log('[useBlindadosData] updateCardPositions: Persisting', persistableCards.length, 'cards');
+    console.log('[useBlindadosData] updateCardPositions: Using API route for atomic persistence...');
 
-    try {
-      const success = await kanbanService.updateCardPositions(columnId, persistableCards.map((c, i) => ({ id: c.id, position: i })));
-      console.log('[useBlindadosData] updateCardPositions: Persistence result:', success);
-      
-      if (!success) {
-        console.error('[useBlindadosData] updateCardPositions: FAILED - reloading from database');
-        await loadData(true);
-      } else {
-        console.log('[useBlindadosData] updateCardPositions: SUCCESS - persisted to database');
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+    const cardPositions = persistableCards.map((c, i) => ({ cardId: c.id, position: i }));
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await fetch('/api/kanban/reorder-cards', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ columnId, cardPositions }),
+        });
+        
+        if (res.ok) {
+          const result = await res.json();
+          console.log('[useBlindadosData] updateCardPositions: SUCCESS on attempt', attempt, result);
+          pendingOperationsRef.current--;
+          return;
+        }
+        
+        const errorData = await res.json().catch(() => ({}));
+        lastError = new Error(`HTTP ${res.status}: ${errorData.error || 'Unknown error'}`);
+        console.warn('[useBlindadosData] updateCardPositions: Attempt', attempt, 'failed:', lastError.message);
+        
+      } catch (e) {
+        lastError = e as Error;
+        console.warn('[useBlindadosData] updateCardPositions: Attempt', attempt, 'error:', e);
       }
-    } catch (e) {
-      console.error('[useBlindadosData] updateCardPositions error:', e);
-      await loadData(true);
-    } finally {
-      pendingOperationsRef.current--;
-      console.log('[useBlindadosData] updateCardPositions: Done - pending ops:', pendingOperationsRef.current);
+      
+      if (attempt < MAX_RETRIES) {
+        const delay = 500 * Math.pow(2, attempt - 1);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
+    
+    console.error('[useBlindadosData] updateCardPositions: All retries failed:', lastError);
+    await loadData(true);
+    pendingOperationsRef.current--;
   }, [loadData]);
 
   const addPomodoroSession = useCallback(async (session: Omit<PomodoroSession, 'id'>) => {
