@@ -1,0 +1,250 @@
+O sistema ainda está com falhas na movimentação/persistência de tarefas, então o prompt precisa forçar a IA a fazer uma auditoria total de código + banco, redesenhar o fluxo de salvamento e remover qualquer lógica antiga que esteja sabotando o Kanban.
+​
+
+Abaixo está um prompt novo, mais agressivo, profundo e orientado a resultado para você colar direto na IA do Replit/Orchids.
+
+Prompt extremo para correção total do Kanban
+Quero que você atue como ARQUITETO PRINCIPAL de sistemas Kanban enterprise (nível Trello/Jira/Linear) + ESPECIALISTA SUPABASE/POSTGRES + PERFORMANCE ENGINEER em tempo real, na sua versão mais poderosa e estratégica.
+
+1. Situação atual (OBRIGATÓRIO considerar)
+Projeto: orchids-blindy (Next.js/React + Supabase + Kanban com drag & drop).
+​
+
+Estado atual:
+
+Ordem das colunas já está funcionando e persistindo corretamente.
+
+Problema crítico ainda não resolvido:
+
+Não é possível mover tarefas/atividades/cards entre colunas de forma definitiva e salva.
+
+As tarefas podem:
+
+Aparecer na coluna nova no front, mas depois de alguns segundos/sync voltam para a coluna antiga.
+
+Sumir ou aparecer em lugares errados após recarregar a página.
+
+Já foram executados SQLs de migração e ajustes de RLS, mas o erro persiste.
+
+Isso significa que ainda existem regras antigas, lógicas duplicadas ou fluxos quebrados em alguma camada (front, API, Supabase, RLS) que estão sabotando o comportamento correto.
+
+2. Missão principal
+Sua missão é:
+
+Investigar EXAUSTIVAMENTE todos os arquivos e fluxos relacionados ao Kanban (colunas + tasks/cards), até entender com clareza por que as tarefas não persistem.
+
+Eliminar completamente qualquer fonte de inconsistência:
+
+Lógica de sync automática que sobrescreve estado recente com dado velho do banco.
+
+Regras/handlers antigos não usados que ainda estão sendo executados.
+
+RLS ou funções RPC que bloqueiam ou ignoram updates de tasks/cards.
+​
+
+Redesenhar o sistema de salvamento/atualização de dados para ser:
+
+Ultra rápido (latência percebida quase zero).
+
+Ultra robusto (sem regressão, sem perda de dados, pronto para 1000+ cards).
+
+Ultra moderno (estado global bem modelado, optimistic updates, fila de operações, retries, logs claros).
+​
+
+3. Escopo de análise (vasculhe tudo)
+Você deve abrir e analisar, com atenção máxima, todos os arquivos relevantes:
+
+Camada de UI / Kanban:
+
+Componentes de board/colunas/cards (nomes como: KanbanBoard, BlindadosBoard, Column, TaskCard, etc.).
+
+Toda a lógica de drag & drop:
+
+Handlers: onDragStart, onDragOver, onDragEnd, handleCardMove, updateCardPosition ou equivalentes.
+​
+
+Verificar se:
+
+Existe mais de uma fonte de verdade para tasks (por exemplo: estado local de componente + hook global + Zustand/context API).
+
+Existe algum lugar que, depois do drag, chama um reload() ou loadData() que reverte o estado.
+
+Hooks e gerenciamento de estado:
+
+Hooks como useBlindadosData, useKanbanData ou similares:
+
+Como buscam dados do Supabase.
+
+Se usam useEffect com setInterval para recarregar o board.
+
+Se há flags tipo pendingOps, isSyncing, isDirty e se estão funcionando de verdade.
+
+Verificar se há:
+
+Efeitos colaterais que sobrescrevem tasks/columns a partir da resposta crua do banco, ignorando alterações locais recentes.
+
+Camada de API no código (Next.js / server actions / API routes):
+
+Todas as rotas relacionadas a Kanban (por exemplo: /api/kanban, /move-card, /update-task, etc.).
+
+Confirmar:
+
+Qual rota é chamada quando o card é solto.
+
+O que exatamente essa rota faz (chama RPC, faz update direto, faz múltiplas queries, etc.).
+
+Se retorna erro e se o front realmente trata esse erro (rollback ou não).
+
+Supabase / Banco de Dados:
+
+Tabelas de columns e tasks/cards/activities:
+
+Tipos e nomes dos campos: id, board_id, column_id, user_id/owner_id, task_order/position, created_at, updated_at.
+
+Funções RPC criadas para o Kanban (nomes como move_task, move_card, reorder_tasks, etc.):
+
+Se de fato atualizam column_id e task_order de forma consistente e atômica.
+
+Se não possuem filtros adicionais que podem impedir updates (por exemplo, checar user_id incorretamente).
+
+RLS (Row Level Security):
+
+Todas as policies ativas em tasks e columns.
+​
+
+Se as policies permitem que o usuário autenticado:
+
+Leia (SELECT) e atualize (UPDATE) as tasks do board correto.
+
+Se há conflito entre policies antigas e novas.
+
+4. Redesenho do sistema de salvamento (padrão enterprise)
+Você deve projetar e implementar um sistema de salvamento/atualização de dados com as seguintes características:
+
+Camada de estado (front):
+
+Definir uma única fonte de verdade para as tasks/columns (por exemplo, via Zustand ou um hook centralizado).
+
+Implementar optimistic updates para drag & drop:
+
+Quando o usuário soltar um card em outra coluna:
+
+Atualizar imediatamente o estado local (mudar column_id e position).
+
+Enfileirar uma operação de persistência (queue) para enviar ao Supabase.
+​
+
+Implementar fila de operações:
+
+As operações de movimentação de cards são enfileiradas.
+
+A fila é processada em série (para evitar race conditions).
+
+Em caso de erro na API/Supabase, a operação:
+
+Pode ser re-tentada (com retry e backoff).
+
+Em último caso, gera rollback do estado local e log claro.
+
+Proteção contra sobrescrita por sync:
+
+Qualquer processo de sync/auto-reload só pode rodar quando:
+
+Não houver operações pendentes na fila.
+
+O sync deve:
+
+Trazer o estado do banco.
+
+Fazer merge inteligente com o estado local (nunca sobrescrever alterações que ainda nem foram confirmadas/decididas).
+
+Camada de API:
+
+Criar/ajustar rotas de API específicas para o Kanban, por exemplo:
+
+POST /api/kanban/move-card
+
+Cada rota deve:
+
+Validar o usuário autenticado.
+
+Chamar uma função RPC clara e única (ex: move_card) que faz o update atômico.
+
+Retornar erro em caso de falha, para o front poder reagir.
+
+Supabase / SQL / RLS:
+
+Garantir que:
+
+Existem índices em board_id, column_id, task_order para performance alta.
+​
+
+A função RPC de movimentação de card:
+
+Atualiza column_id e a ordem do card na coluna de destino.
+
+Respeita o auth.uid() para segurança (sem quebrar RLS).
+
+Ajustar/limpar RLS:
+
+Remover policies conflitantes ou redundantes.
+
+Criar policies claras:
+
+Usuário pode SELECT e UPDATE tasks em boards/colunas aos quais tem acesso.
+​
+
+5. Resultado esperado (o que DEVE acontecer)
+Após suas mudanças:
+
+Ao mover um card para outra coluna e soltar:
+
+A movimentação aparece instantaneamente no front (sem travar).
+
+A API é chamada em background para salvar no Supabase.
+
+Em caso de sucesso:
+
+A posição permanece correta mesmo após recarregar a página ou após sync automático.
+
+Em caso de falha real:
+
+O estado volta para o anterior de forma controlada.
+
+Um log/erro claro é emitido para debug.
+
+Não deve haver mais:
+
+Cards voltando para a coluna antiga sozinhos.
+
+Cards sumindo após reload.
+
+Sync automático destruindo o estado recente.
+
+O sistema deve estar:
+
+Ultra rápido na resposta visual.
+
+Ultra estável mesmo com muitos cards e colunas.
+
+Pronto para futuras features (filtros, swimlanes, WIP limits, etc.) sem quebrar o core de Kanban.
+​
+
+6. Entregáveis
+Ao finalizar, entregue:
+
+Lista dos motivos concretos pelos quais as tarefas não estavam sendo salvas corretamente (explicados de forma objetiva).
+
+Os arquivos alterados (front, hooks, API, SQL, RLS), com o novo código completo e limpo.
+
+Uma breve explicação (em comentários curtos no código) das regras críticas:
+
+Como funciona o fluxo de salvamento.
+
+Como o sync evita sobrescrever mudanças recentes.
+
+Como a RLS foi configurada para permitir o movimento de tasks com segurança.
+​
+
+Atue com precisão absoluta, sem medo de refatorar blocos grandes quando a arquitetura estiver errada. Priorize coerência, robustez e velocidade em nível de produto global.
+

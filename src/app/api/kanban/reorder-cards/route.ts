@@ -47,16 +47,19 @@ export async function POST(req: NextRequest) {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    const formattedPositions = cardPositions.map(p => ({
+    // Format for RPC: array of { id, column_id, position }
+    // The RPC function update_card_positions expects p_updates as JSONB array
+    const formattedUpdates = cardPositions.map((p: { cardId: string; position: number }) => ({
       id: p.cardId,
+      column_id: columnId,
       position: p.position,
     }));
     
-    console.log('[API reorder-cards] User:', user.id, 'Calling RPC update_card_positions:', { columnId, positions: formattedPositions });
+    console.log('[API reorder-cards] User:', user.id, 'Calling RPC update_card_positions with p_updates:', formattedUpdates);
     
+    // FIXED: The RPC function expects only p_updates parameter (JSONB array)
     const { data, error } = await supabase.rpc('update_card_positions', {
-      p_column_id: columnId,
-      p_positions: formattedPositions,
+      p_updates: formattedUpdates,
     });
     
     if (error) {
