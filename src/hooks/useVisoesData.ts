@@ -296,39 +296,55 @@ export function useVisoesData() {
   }, [user, supabase]);
 
   const setMainGoal = useCallback(async (text: string, year: number) => {
-    if (!user) return;
-
-    const { data: existing } = await supabase
-      .from('main_goals')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('year', year)
-      .single();
-
-    let result;
-    if (existing) {
-      const { data } = await supabase
-        .from('main_goals')
-        .update({ text, updated_at: new Date().toISOString() })
-        .eq('id', existing.id)
-        .select()
-        .single();
-      result = data;
-    } else {
-      const { data } = await supabase
-        .from('main_goals')
-        .insert({ user_id: user.id, text, year })
-        .select()
-        .single();
-      result = data;
+    if (!user) {
+      console.error('setMainGoal: No user');
+      return;
     }
 
-    if (result) {
-      setData(prev => {
-        const updated = { ...prev, mainGoal: { id: result.id, text: result.text, year: result.year, createdAt: result.created_at } };
-        setCache(updated);
-        return updated;
-      });
+    const tempGoal = { id: `temp-${Date.now()}`, text, year, createdAt: new Date().toISOString() };
+    setData(prev => {
+      const updated = { ...prev, mainGoal: tempGoal };
+      setCache(updated);
+      return updated;
+    });
+
+    try {
+      const { data: existing } = await supabase
+        .from('main_goals')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('year', year)
+        .single();
+
+      let result;
+      if (existing) {
+        const { data, error } = await supabase
+          .from('main_goals')
+          .update({ text })
+          .eq('id', existing.id)
+          .select()
+          .single();
+        if (error) console.error('setMainGoal update error:', error);
+        result = data;
+      } else {
+        const { data, error } = await supabase
+          .from('main_goals')
+          .insert({ user_id: user.id, text, year })
+          .select()
+          .single();
+        if (error) console.error('setMainGoal insert error:', error);
+        result = data;
+      }
+
+      if (result) {
+        setData(prev => {
+          const updated = { ...prev, mainGoal: { id: result.id, text: result.text, year: result.year, createdAt: result.created_at } };
+          setCache(updated);
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.error('setMainGoal exception:', e);
     }
   }, [user, supabase]);
 
@@ -498,20 +514,48 @@ export function useVisoesData() {
   }, [user, supabase]);
 
   const addReminder = useCallback(async (text: string, dueDate: string | null) => {
-    if (!user) return;
+    if (!user) {
+      console.error('addReminder: No user');
+      return;
+    }
 
-    const { data: newReminder } = await supabase
-      .from('reminders')
-      .insert({ user_id: user.id, text, due_date: dueDate, completed: false })
-      .select()
-      .single();
+    const tempId = `temp-${Date.now()}`;
+    const tempReminder = { id: tempId, text, dueDate, completed: false, createdAt: new Date().toISOString() };
+    
+    setData(prev => {
+      const updated = { ...prev, reminders: [tempReminder, ...prev.reminders] };
+      setCache(updated);
+      return updated;
+    });
 
-    if (newReminder) {
-      setData(prev => {
-        const updated = { ...prev, reminders: [{ id: newReminder.id, text: newReminder.text, dueDate: newReminder.due_date, completed: newReminder.completed, createdAt: newReminder.created_at }, ...prev.reminders] };
-        setCache(updated);
-        return updated;
-      });
+    try {
+      const { data: newReminder, error } = await supabase
+        .from('reminders')
+        .insert({ user_id: user.id, text, due_date: dueDate, completed: false })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('addReminder error:', error);
+        return;
+      }
+
+      if (newReminder) {
+        setData(prev => {
+          const updated = { 
+            ...prev, 
+            reminders: prev.reminders.map(r => 
+              r.id === tempId 
+                ? { id: newReminder.id, text: newReminder.text, dueDate: newReminder.due_date, completed: newReminder.completed, createdAt: newReminder.created_at }
+                : r
+            )
+          };
+          setCache(updated);
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.error('addReminder exception:', e);
     }
   }, [user, supabase]);
 
@@ -592,20 +636,56 @@ export function useVisoesData() {
   }, [user, supabase]);
 
   const addBankAccount = useCallback(async (account: Omit<BankAccount, 'id'>) => {
-    if (!user) return;
+    if (!user) {
+      console.error('addBankAccount: No user');
+      return;
+    }
 
-    const { data: newAccount } = await supabase
-      .from('bank_accounts')
-      .insert({ user_id: user.id, name: account.name, type: account.type, account_type: account.accountType, person_type: account.personType, balance: account.balance, notes: account.notes })
-      .select()
-      .single();
+    const tempId = `temp-${Date.now()}`;
+    const tempAccount: BankAccount = { id: tempId, ...account };
+    
+    setData(prev => {
+      const updated = { ...prev, bankAccounts: [...prev.bankAccounts, tempAccount] };
+      setCache(updated);
+      return updated;
+    });
 
-    if (newAccount) {
-      setData(prev => {
-        const updated = { ...prev, bankAccounts: [...prev.bankAccounts, { id: newAccount.id, name: newAccount.name, type: newAccount.type, accountType: newAccount.account_type || '', personType: newAccount.person_type || '', balance: Number(newAccount.balance), notes: newAccount.notes || '' }] };
-        setCache(updated);
-        return updated;
-      });
+    try {
+      const { data: newAccount, error } = await supabase
+        .from('bank_accounts')
+        .insert({ 
+          user_id: user.id, 
+          name: account.name, 
+          type: account.type, 
+          account_type: account.accountType || null, 
+          person_type: account.personType || null, 
+          balance: account.balance || 0, 
+          notes: account.notes || null 
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('addBankAccount error:', error);
+        return;
+      }
+
+      if (newAccount) {
+        setData(prev => {
+          const updated = { 
+            ...prev, 
+            bankAccounts: prev.bankAccounts.map(a => 
+              a.id === tempId 
+                ? { id: newAccount.id, name: newAccount.name, type: newAccount.type, accountType: newAccount.account_type || '', personType: newAccount.person_type || '', balance: Number(newAccount.balance), notes: newAccount.notes || '' }
+                : a
+            ) 
+          };
+          setCache(updated);
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.error('addBankAccount exception:', e);
     }
   }, [user, supabase]);
 
@@ -642,43 +722,67 @@ export function useVisoesData() {
   }, [user, supabase]);
 
   const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'>) => {
-    if (!user) return;
+    if (!user) {
+      console.error('addTransaction: No user');
+      return;
+    }
 
-    const { data: newTransaction } = await supabase
-      .from('transactions')
-      .insert({ 
-        user_id: user.id, 
-        title: transaction.title, 
-        type: transaction.type, 
-        category: transaction.category,
-        amount: transaction.amount, 
-        date: transaction.date, 
-        status: transaction.status,
-        payment_method: transaction.paymentMethod,
-        notes: transaction.notes,
-        bank_account_id: transaction.bankAccountId,
-      })
-      .select()
-      .single();
+    const tempId = `temp-${Date.now()}`;
+    const tempTx: Transaction = { id: tempId, ...transaction };
+    
+    setData(prev => {
+      const updated = { ...prev, transactions: [tempTx, ...prev.transactions] };
+      setCache(updated);
+      return updated;
+    });
 
-    if (newTransaction) {
-      setData(prev => {
-        const newTx: Transaction = { 
-          id: newTransaction.id, 
-          title: newTransaction.title, 
-          type: newTransaction.type, 
-          category: newTransaction.category || 'OUTROS',
-          amount: Number(newTransaction.amount), 
-          date: newTransaction.date, 
-          status: newTransaction.status,
-          paymentMethod: newTransaction.payment_method || 'pix',
-          notes: newTransaction.notes || '',
-          bankAccountId: newTransaction.bank_account_id,
-        };
-        const updated = { ...prev, transactions: [newTx, ...prev.transactions] };
-        setCache(updated);
-        return updated;
-      });
+    try {
+      const { data: newTransaction, error } = await supabase
+        .from('transactions')
+        .insert({ 
+          user_id: user.id, 
+          title: transaction.title, 
+          type: transaction.type, 
+          category: transaction.category || 'OUTROS',
+          amount: transaction.amount, 
+          date: transaction.date, 
+          status: transaction.status || 'pending',
+          payment_method: transaction.paymentMethod || 'pix',
+          notes: transaction.notes || null,
+          bank_account_id: transaction.bankAccountId || null,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('addTransaction error:', error);
+        return;
+      }
+
+      if (newTransaction) {
+        setData(prev => {
+          const newTx: Transaction = { 
+            id: newTransaction.id, 
+            title: newTransaction.title, 
+            type: newTransaction.type, 
+            category: newTransaction.category || 'OUTROS',
+            amount: Number(newTransaction.amount), 
+            date: newTransaction.date, 
+            status: newTransaction.status,
+            paymentMethod: newTransaction.payment_method || 'pix',
+            notes: newTransaction.notes || '',
+            bankAccountId: newTransaction.bank_account_id,
+          };
+          const updated = { 
+            ...prev, 
+            transactions: prev.transactions.map(t => t.id === tempId ? newTx : t)
+          };
+          setCache(updated);
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.error('addTransaction exception:', e);
     }
   }, [user, supabase]);
 

@@ -79,12 +79,14 @@ export function LeiDaAtracaoCard({
   };
 
   const currentImage = images[currentIndex];
+  const hasImages = images.length > 0;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative bg-[#0a0f1f] rounded-2xl border border-[#00f6ff]/10 overflow-hidden h-full flex flex-col"
+      onClick={hasImages ? onOpenFullscreen : undefined}
+      className={`relative bg-[#0a0f1f] rounded-2xl border border-[#00f6ff]/10 overflow-hidden h-full flex flex-col ${hasImages ? 'cursor-pointer' : ''}`}
     >
       <div 
         className="absolute inset-0 opacity-20 pointer-events-none"
@@ -120,38 +122,24 @@ export function LeiDaAtracaoCard({
             </motion.button>
 
             {images.length > 1 && (
-              <>
-                <div className="absolute bottom-16 left-3 right-3 flex gap-1 overflow-hidden">
-                  {images.slice(0, 5).map((img, idx) => (
-                    <button
-                      key={img.id}
-                      onClick={() => setCurrentIndex(idx)}
-                      className={`relative w-12 h-12 rounded-lg overflow-hidden border transition-all ${
-                        idx === currentIndex ? 'border-[#00f6ff] ring-1 ring-[#00f6ff]' : 'border-white/20'
-                      }`}
-                    >
-                      <img src={img.imageUrl} alt="" className="w-full h-full object-cover" />
-                    </button>
-                  ))}
-                  {images.length > 5 && (
-                    <div className="w-12 h-12 rounded-lg bg-black/50 flex items-center justify-center border border-white/20">
-                      <span className="text-white/80 text-xs font-medium">+{images.length - 5}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="absolute bottom-[72px] left-1/2 -translate-x-1/2 flex gap-1.5">
-                  {images.map((_, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setCurrentIndex(idx)}
-                      className={`w-2 h-2 rounded-full transition-all ${
-                        idx === currentIndex ? 'bg-[#00f6ff] w-4' : 'bg-white/30 hover:bg-white/50'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </>
+              <div className="absolute bottom-4 left-3 flex gap-1.5 overflow-hidden">
+                {images.slice(0, 6).map((img, idx) => (
+                  <button
+                    key={img.id}
+                    onClick={(e) => { e.stopPropagation(); setCurrentIndex(idx); }}
+                    className={`relative w-12 h-12 rounded-lg overflow-hidden border-2 transition-all flex-shrink-0 ${
+                      idx === currentIndex ? 'border-[#00f6ff] ring-1 ring-[#00f6ff]' : 'border-white/20 hover:border-white/40'
+                    }`}
+                  >
+                    <img src={img.imageUrl} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+                {images.length > 6 && (
+                  <div className="w-12 h-12 rounded-lg bg-black/60 flex items-center justify-center border-2 border-white/20 flex-shrink-0">
+                    <span className="text-white/80 text-xs font-bold">+{images.length - 6}</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         ) : (
@@ -181,17 +169,19 @@ export function LeiDaAtracaoCard({
         </div>
       </div>
 
-      <div className="relative z-10 p-4 flex justify-center">
-        <motion.button
-          whileHover={{ scale: 1.02, boxShadow: '0 0 30px rgba(0, 246, 255, 0.4)' }}
-          whileTap={{ scale: 0.98 }}
-          onClick={onOpenFullscreen}
-          className="px-6 py-2.5 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-semibold transition-all"
-          style={{ boxShadow: '0 0 20px rgba(0, 246, 255, 0.3)' }}
-        >
-          Manifestar Futuro
-        </motion.button>
-      </div>
+      {!hasImages && (
+        <div className="relative z-10 p-4 flex justify-center">
+          <motion.button
+            whileHover={{ scale: 1.02, boxShadow: '0 0 30px rgba(0, 246, 255, 0.4)' }}
+            whileTap={{ scale: 0.98 }}
+            onClick={(e) => { e.stopPropagation(); onOpenFullscreen(); }}
+            className="px-6 py-2.5 rounded-xl bg-[#00f6ff] text-[#010516] text-sm font-semibold transition-all"
+            style={{ boxShadow: '0 0 20px rgba(0, 246, 255, 0.3)' }}
+          >
+            Manifestar Futuro
+          </motion.button>
+        </div>
+      )}
 
       <input
         type="file"
