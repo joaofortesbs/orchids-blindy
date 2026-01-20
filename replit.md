@@ -45,15 +45,15 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Ultra-robust persistence v15 (COMPLETE)
-  - NEW ARCHITECTURE: API routes + Zustand store + retry logic with exponential backoff
-  - Created /api/kanban/move-card - atomic card movement via server-side RPC
-  - Created /api/kanban/reorder-cards - atomic card reordering via server-side RPC
-  - Created Zustand kanbanStore with queue system and optimistic updates
-  - moveCard now uses API route with 3 retries and exponential backoff (500ms, 1s, 2s)
-  - updateCardPositions now uses API route with same retry pattern
-  - Server-side uses SUPABASE_SERVICE_ROLE_KEY for guaranteed write access
-  - All operations are truly atomic and resilient to network failures
+- Jan 20, 2026: DEFINITIVE FIX v16 - Card persistence working
+  - CRITICAL BUG FIXED: API route /api/kanban/reorder-cards had WRONG RPC parameters
+  - Was sending: { p_column_id, p_positions } - INCORRECT
+  - Now sending: { p_updates } with array of { id, column_id, position } - CORRECT
+  - This was the ROOT CAUSE of cards not persisting between columns
+  - API routes now correctly match the SQL RPC function signatures
+  - Flow: handleDragOver (UI) → handleDragEnd (API call) → RPC (atomic DB update)
+  - Both move-card and reorder-cards now have proper authentication
+  - Retry logic with exponential backoff (3 attempts: 500ms, 1s, 2s)
 
 - Jan 20, 2026: Kanban flickering fix v14
   - ROOT CAUSE: Double state updates - handleDragOver updates UI, then moveCard applied optimistic update again
