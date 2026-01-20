@@ -381,11 +381,27 @@ export function useBlindadosData() {
   }, [loadData]);
 
   const moveCard = useCallback(async (cardId: string, sourceColId: string, targetColId: string, targetIdx: number) => {
+    console.log('[useBlindadosData] moveCard called:', { cardId, sourceColId, targetColId, targetIdx });
+    
+    // Check if target column has a temporary ID (not yet persisted)
+    if (targetColId.startsWith('temp-')) {
+      console.error('[useBlindadosData] moveCard: Cannot move to temporary column. Wait for column to be saved first.');
+      return;
+    }
+    
     const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) return;
+    if (!kanbanService) {
+      console.error('[useBlindadosData] moveCard: kanbanService not available');
+      return;
+    }
     
     const card = dataRef.current.kanban.columns.find(c => c.id === sourceColId)?.cards.find(c => c.id === cardId);
-    if (!card) return;
+    if (!card) {
+      console.error('[useBlindadosData] moveCard: Card not found', { cardId, sourceColId });
+      return;
+    }
+    
+    console.log('[useBlindadosData] moveCard: Card found:', { cardTitle: card.title, cardId: card.id });
 
     let updatedSourceCards: { id: string; position: number }[] = [];
     let updatedTargetCards: { id: string; position: number }[] = [];
@@ -410,15 +426,30 @@ export function useBlindadosData() {
       return updated;
     });
 
+    console.log('[useBlindadosData] moveCard: Persisting to database...', {
+      sourceColId,
+      targetColId,
+      sourceCards: updatedSourceCards,
+      targetCards: updatedTargetCards,
+    });
+    
     try {
-      await Promise.all([
+      const [sourceResult, targetResult] = await Promise.all([
         kanbanService.updateCardPositions(sourceColId, updatedSourceCards),
         kanbanService.updateCardPositions(targetColId, updatedTargetCards),
       ]);
+      
+      console.log('[useBlindadosData] moveCard: Persistence results:', { sourceResult, targetResult });
+      
+      if (!sourceResult || !targetResult) {
+        console.error('[useBlindadosData] moveCard: Failed to persist - reloading data');
+        loadData();
+      }
     } catch (e) {
-      console.error('moveCard error:', e);
+      console.error('[useBlindadosData] moveCard error:', e);
+      loadData();
     }
-  }, []);
+  }, [loadData]);
 
   const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string }) => {
     const kanbanService = servicesRef.current.kanban;

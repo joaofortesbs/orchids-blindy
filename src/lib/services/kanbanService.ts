@@ -408,11 +408,27 @@ export class KanbanService {
       return true;
     }
     
-    debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId);
+    // Validate columnId is a valid UUID (not a temp ID or simple string)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isValidUUID = uuidRegex.test(columnId);
+    
+    debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId, '(valid UUID:', isValidUUID, ')');
+    
+    if (!isValidUUID) {
+      console.error('[KanbanService] updateCardPositions: Invalid column ID format:', columnId, '- Expected UUID');
+      return false;
+    }
     
     try {
       return await withRetry(async () => {
         let allSuccess = true;
+        
+        // Validate all card IDs are valid UUIDs
+        const invalidCards = cards.filter(c => !uuidRegex.test(c.id));
+        if (invalidCards.length > 0) {
+          console.error('[KanbanService] updateCardPositions: Invalid card IDs (not UUIDs):', invalidCards.map(c => c.id));
+          return false;
+        }
         
         // Process all cards in parallel for speed
         const promises = cards.map(card =>
@@ -435,7 +451,12 @@ export class KanbanService {
           const card = cards[i];
           
           if (error) {
-            console.error('[KanbanService] updateCardPositions error for card', card.id, ':', error.message);
+            // Check if it's a foreign key constraint error
+            if (error.message.includes('violates foreign key constraint')) {
+              console.error('[KanbanService] updateCardPositions: Column', columnId, 'does not exist in database. Foreign key violation.');
+            } else {
+              console.error('[KanbanService] updateCardPositions error for card', card.id, ':', error.message, error.code, error.details);
+            }
             throw error;
           }
           
