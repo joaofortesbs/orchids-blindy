@@ -452,9 +452,11 @@ export function useBlindadosData() {
   }, []);
 
   const updateKanbanColumns = useCallback(async (columns: KanbanColumn[]) => {
+    console.log('[useBlindadosData] updateKanbanColumns called with', columns.length, 'columns');
+    
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) {
-      console.error('updateKanbanColumns: service not available');
+      console.error('[useBlindadosData] updateKanbanColumns: service not available');
       return;
     }
     
@@ -463,13 +465,14 @@ export function useBlindadosData() {
     const hasTemporaryColumns = columns.some(c => c.id.startsWith('temp-'));
     
     if (hasTemporaryColumns) {
-      console.log('updateKanbanColumns: Skipping persistence - has temporary columns');
+      console.log('[useBlindadosData] updateKanbanColumns: Has temporary columns, skipping persistence');
     }
     
     // Store previous state for rollback
     const previousColumns = dataRef.current.kanban.columns;
     
     // Optimistic update - instantly show new column order
+    console.log('[useBlindadosData] updateKanbanColumns: Applying optimistic update');
     setData(prev => {
       const updated = { ...prev, kanban: { columns }, lastUpdated: new Date().toISOString() };
       setCache(updated);
@@ -479,14 +482,15 @@ export function useBlindadosData() {
     // Only persist if all columns have valid IDs
     if (hasTemporaryColumns) return;
 
-    console.log('updateKanbanColumns: Persisting', validColumns.length, 'columns');
+    console.log('[useBlindadosData] updateKanbanColumns: Persisting', validColumns.length, 'columns to database');
+    console.log('[useBlindadosData] updateKanbanColumns: Column data:', JSON.stringify(validColumns.map((c, i) => ({ id: c.id, position: i }))));
     
     try {
-      const success = await kanbanService.updateColumnPositions(validColumns.map((c, i) => ({ id: c.id, title: c.title, position: i })));
-      console.log('updateKanbanColumns: Persistence result:', success);
+      const success = await kanbanService.updateColumnPositions(validColumns.map((c, i) => ({ id: c.id, position: i })));
+      console.log('[useBlindadosData] updateKanbanColumns: Persistence result:', success);
       if (!success) {
         // Rollback on failure
-        console.error('updateKanbanColumns: Rolling back due to failure');
+        console.error('[useBlindadosData] updateKanbanColumns: Rolling back due to failure');
         setData(prev => {
           const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
           setCache(updated);
@@ -494,7 +498,7 @@ export function useBlindadosData() {
         });
       }
     } catch (e) {
-      console.error('updateKanbanColumns error:', e);
+      console.error('[useBlindadosData] updateKanbanColumns error:', e);
       // Rollback on error
       setData(prev => {
         const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };

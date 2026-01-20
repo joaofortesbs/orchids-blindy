@@ -45,9 +45,12 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban performance optimization v6
+- Jan 20, 2026: Kanban performance optimization v7 (DEBUGGING BUILD)
+  - Added authentication verification before every update operation
+  - Added comprehensive debug logging throughout the drag-and-drop flow
+  - Fixed column ID detection to handle both "column-{id}" and "{id}" formats
   - Column reordering now persists with retry system and rollback on failure
-  - Card position updates within columns now use retry system
+  - Card position updates within columns now use retry system with RLS verification
   - Singleton Supabase client: reuses connection for faster subsequent requests
   - Added retry system with exponential backoff (2 retries, 300ms base delay)
   - Added operation timeout (8 seconds) to prevent hanging requests
@@ -56,7 +59,7 @@ npm run start -- -p 5000 -H 0.0.0.0
   - Cards/columns appear instantly with temporary IDs, replaced by real IDs after DB response
   - Auto-rollback on failure: if DB save fails, optimistic items are removed
   - Protected against double-clicks: form clears immediately before async operation
-  - Improved UX: no more waiting for database response to see new items
+  - Debug logging enabled: check browser console (F12) for detailed flow information
 
 - Jan 20, 2026: Kanban persistence definitive fix v3
   - Fixed JSONB serialization: tags/subtasks now passed as arrays directly to Supabase (not JSON.stringify)

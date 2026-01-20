@@ -342,44 +342,40 @@ export class KanbanService {
     }
   }
 
-  async updateColumnPositions(columns: { id: string; title: string; position: number }[]): Promise<boolean> {
+  async updateColumnPositions(columns: { id: string; position: number }[]): Promise<boolean> {
     if (columns.length === 0) {
       debugLog('updateColumnPositions: No columns to update');
       return true;
     }
     
     debugLog('updateColumnPositions: Starting update for', columns.length, 'columns');
-    debugLog('updateColumnPositions: Column data:', JSON.stringify(columns.map(c => ({ id: c.id, title: c.title, pos: c.position }))));
-    
-    // Verify authentication first
-    const isAuthenticated = await this.verifyAuth();
-    if (!isAuthenticated) {
-      console.error('[KanbanService] updateColumnPositions: Authentication failed');
-      return false;
-    }
+    debugLog('updateColumnPositions: Column data:', JSON.stringify(columns));
     
     try {
       return await withRetry(async () => {
         let allSuccess = true;
         
-        // Process columns one by one for better error tracking
-        for (let i = 0; i < columns.length; i++) {
-          const col = columns[i];
-          debugLog(`updateColumnPositions: Updating column ${i + 1}/${columns.length}:`, col.id, 'to position', col.position);
-          
-          const { data, error } = await this.supabase
+        // Process all columns in parallel for speed
+        const promises = columns.map(col => 
+          this.supabase
             .from('kanban_columns')
             .update({ 
               position: col.position, 
-              title: col.title, 
               updated_at: new Date().toISOString() 
             })
             .eq('id', col.id)
             .eq('user_id', this.userId)
-            .select();
+            .select()
+        );
+        
+        const results = await Promise.all(promises);
+        
+        for (let i = 0; i < results.length; i++) {
+          const { data, error } = results[i];
+          const col = columns[i];
           
           if (error) {
-            console.error('[KanbanService] updateColumnPositions error for column', col.id, ':', error.message, error.hint, error.details);
+            console.error('[KanbanService] updateColumnPositions error for column', col.id, ':', error.message);
             throw error;
           }
           
@@ -414,22 +410,13 @@ export class KanbanService {
     
     debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId);
     
-    // Verify authentication first
-    const isAuthenticated = await this.verifyAuth();
-    if (!isAuthenticated) {
-      console.error('[KanbanService] updateCardPositions: Authentication failed');
-      return false;
-    }
-    
     try {
       return await withRetry(async () => {
         let allSuccess = true;
         
-        for (let i = 0; i < cards.length; i++) {
-          const card = cards[i];
-          debugLog(`updateCardPositions: Updating card ${i + 1}/${cards.length}:`, card.id, 'to position', card.position);
-          
-          const { data, error } = await this.supabase
+        // Process all cards in parallel for speed
+        const promises = cards.map(card =>
+          this.supabase
             .from('kanban_cards')
             .update({ 
               position: card.position, 
@@ -438,8 +425,15 @@ export class KanbanService {
             })
             .eq('id', card.id)
             .eq('user_id', this.userId)
-            .select();
-
+            .select()
+        );
+        
+        const results = await Promise.all(promises);
+        
+        for (let i = 0; i < results.length; i++) {
+          const { data, error } = results[i];
+          const card = cards[i];
+          
           if (error) {
             console.error('[KanbanService] updateCardPositions error for card', card.id, ':', error.message);
             throw error;
