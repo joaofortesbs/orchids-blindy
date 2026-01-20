@@ -500,9 +500,35 @@ export function useBlindadosData() {
     }
     
     const previousColumns = dataRef.current.kanban.columns;
+    const sourceColumn = previousColumns.find(c => c.id === sourceColId);
+    const card = sourceColumn?.cards.find(c => c.id === cardId);
+    
+    if (!card) {
+      console.error('[useBlindadosData] moveCard: Card not found', { cardId, sourceColId });
+      return;
+    }
     
     pendingOperationsRef.current++;
     console.log('[useBlindadosData] moveCard: Starting - pending ops:', pendingOperationsRef.current);
+
+    // CRITICAL: Apply optimistic update BEFORE RPC call for instant UI response
+    const optimisticColumns = previousColumns.map(col => {
+      if (col.id === sourceColId) {
+        return { ...col, cards: col.cards.filter(c => c.id !== cardId) };
+      }
+      if (col.id === targetColId) {
+        const newCards = [...col.cards];
+        newCards.splice(targetIdx, 0, card);
+        return { ...col, cards: newCards };
+      }
+      return col;
+    });
+    
+    setData(prev => {
+      const updated = { ...prev, kanban: { columns: optimisticColumns }, lastUpdated: new Date().toISOString() };
+      setCache(updated);
+      return updated;
+    });
 
     console.log('[useBlindadosData] moveCard: Using atomic RPC move_card...');
     
@@ -519,7 +545,12 @@ export function useBlindadosData() {
           return updated;
         });
       } else {
-        console.log('[useBlindadosData] moveCard: SUCCESS');
+        console.log('[useBlindadosData] moveCard: SUCCESS - state already updated optimistically');
+        // State is already correct from optimistic update, just ensure cache is synced
+        setData(prev => {
+          setCache(prev);
+          return prev;
+        });
       }
     } catch (e) {
       console.error('[useBlindadosData] moveCard error:', e);
@@ -671,6 +702,23 @@ export function useBlindadosData() {
     const previousColumns = dataRef.current.kanban.columns;
     
     pendingOperationsRef.current++;
+    console.log('[useBlindadosData] updateCardPositions: Starting - pending ops:', pendingOperationsRef.current);
+
+    // CRITICAL: Apply optimistic update to commit the new card order
+    setData(prev => {
+      const updated = {
+        ...prev,
+        kanban: {
+          columns: prev.kanban.columns.map(col =>
+            col.id === columnId ? { ...col, cards } : col
+          ),
+        },
+        lastUpdated: new Date().toISOString(),
+      };
+      setCache(updated);
+      return updated;
+    });
+
     console.log('[useBlindadosData] updateCardPositions: Persisting', persistableCards.length, 'cards');
 
     try {
@@ -686,6 +734,11 @@ export function useBlindadosData() {
         });
       } else {
         console.log('[useBlindadosData] updateCardPositions: SUCCESS');
+        // Ensure cache is synced after successful RPC
+        setData(prev => {
+          setCache(prev);
+          return prev;
+        });
       }
     } catch (e) {
       console.error('[useBlindadosData] updateCardPositions error:', e);
@@ -696,6 +749,7 @@ export function useBlindadosData() {
       });
     } finally {
       pendingOperationsRef.current--;
+      console.log('[useBlindadosData] updateCardPositions: Done - pending ops:', pendingOperationsRef.current);
     }
   }, []);
 
