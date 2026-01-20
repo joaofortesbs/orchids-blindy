@@ -45,7 +45,17 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban flickering fix v14 (COMPLETE)
+- Jan 20, 2026: Ultra-robust persistence v15 (COMPLETE)
+  - NEW ARCHITECTURE: API routes + Zustand store + retry logic with exponential backoff
+  - Created /api/kanban/move-card - atomic card movement via server-side RPC
+  - Created /api/kanban/reorder-cards - atomic card reordering via server-side RPC
+  - Created Zustand kanbanStore with queue system and optimistic updates
+  - moveCard now uses API route with 3 retries and exponential backoff (500ms, 1s, 2s)
+  - updateCardPositions now uses API route with same retry pattern
+  - Server-side uses SUPABASE_SERVICE_ROLE_KEY for guaranteed write access
+  - All operations are truly atomic and resilient to network failures
+
+- Jan 20, 2026: Kanban flickering fix v14
   - ROOT CAUSE: Double state updates - handleDragOver updates UI, then moveCard applied optimistic update again
   - SOLUTION: moveCard and updateCardPositions no longer apply optimistic updates (handleDragOver already did)
   - Flow: handleDragOver updates UI → moveCard just persists to DB → no flickering

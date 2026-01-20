@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,13 +15,33 @@ export async function POST(req: NextRequest) {
     }
     
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
-    if (!supabaseUrl || !supabaseServiceKey) {
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
       console.error('[API reorder-cards] Missing Supabase credentials');
       return NextResponse.json(
         { error: 'Server configuration error' },
         { status: 500 }
+      );
+    }
+    
+    const cookieStore = await cookies();
+    const authClient = createServerClient(supabaseUrl, supabaseAnonKey, {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+      },
+    });
+    
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    
+    if (authError || !user) {
+      console.error('[API reorder-cards] Unauthorized:', authError);
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
       );
     }
     
@@ -30,7 +52,7 @@ export async function POST(req: NextRequest) {
       position: p.position,
     }));
     
-    console.log('[API reorder-cards] Calling RPC update_card_positions:', { columnId, positions: formattedPositions });
+    console.log('[API reorder-cards] User:', user.id, 'Calling RPC update_card_positions:', { columnId, positions: formattedPositions });
     
     const { data, error } = await supabase.rpc('update_card_positions', {
       p_column_id: columnId,
@@ -45,7 +67,7 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    console.log('[API reorder-cards] SUCCESS:', data);
+    console.log('[API reorder-cards] SUCCESS for user', user.id, ':', data);
     
     return NextResponse.json({ 
       success: true, 
