@@ -45,12 +45,14 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban card movement fix v10
+- Jan 20, 2026: Kanban card movement fix v11 (COMPLETE)
   - ROOT CAUSE FIXED: Removed static column IDs from DEFAULT_DATA that conflicted with database UUIDs
   - DEFAULT_KANBAN_COLUMNS now starts empty; columns are loaded from database or created on first use
   - This ensures all column IDs are real database UUIDs, fixing movement to user-created columns
+  - Added isLoaded prop to KanbanBoard to block DnD until data is ready
+  - Added canDrag check that blocks drag if isLoaded=false or hasTemporaryColumns=true
   - Added validation to prevent operations on temporary (unsaved) columns
-  - Improved temporary card filtering in updateCardPositions service
+  - Improved temporary card filtering in both hook and service layers
   - Added foreign key constraint error detection for better debugging
   - Enhanced logging throughout moveCard and updateCardPositions flow
   - Auto-reload data on persistence failures to sync with database state
