@@ -280,6 +280,37 @@ export function useBlindadosData() {
     }
   }, []);
 
+  const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string }) => {
+    const kanbanService = servicesRef.current.kanban;
+    if (!kanbanService) {
+      console.error('updateKanbanColumn: service not available');
+      return;
+    }
+    
+    setData(prev => {
+      const updated = {
+        ...prev,
+        kanban: {
+          columns: prev.kanban.columns.map(c =>
+            c.id === columnId ? { ...c, title: updates.title?.toUpperCase() ?? c.title } : c
+          ),
+        },
+        lastUpdated: new Date().toISOString(),
+      };
+      setCache(updated);
+      return updated;
+    });
+
+    try {
+      const success = await kanbanService.updateColumn(columnId, updates);
+      if (!success) {
+        console.error('updateKanbanColumn: failed to persist to database');
+      }
+    } catch (e) {
+      console.error('updateKanbanColumn error:', e);
+    }
+  }, []);
+
   const updateKanbanColumns = useCallback(async (columns: KanbanColumn[]) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
@@ -367,6 +398,7 @@ export function useBlindadosData() {
     isLoaded,
     isSyncing,
     updateKanbanColumns,
+    updateKanbanColumn,
     addKanbanColumn,
     deleteKanbanColumn,
     addKanbanCard,

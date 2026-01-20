@@ -29,6 +29,7 @@ function MainApp() {
     data,
     isLoaded,
     updateKanbanColumns,
+    updateKanbanColumn,
     addKanbanColumn,
     deleteKanbanColumn,
     addKanbanCard,
@@ -327,6 +328,7 @@ function MainApp() {
                 <KanbanBoard
                   columns={safeColumns}
                   onColumnsChange={updateKanbanColumns}
+                  onUpdateColumn={updateKanbanColumn}
                   onAddColumn={addKanbanColumn}
                   onDeleteColumn={deleteKanbanColumn}
                   onAddCard={addKanbanCard}

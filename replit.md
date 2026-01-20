@@ -45,6 +45,15 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Kanban and Timer persistence fixes
+  - Created migration for Kanban tables (migrations/003_kanban_tables.sql)
+  - Added updateColumn method to KanbanService for individual column updates
+  - Added updateKanbanColumn function to useBlindadosData hook
+  - Fixed column renaming to persist to database immediately
+  - Improved error handling with try-catch blocks throughout KanbanService
+  - Parallelized column position updates for better performance
+  - All Kanban operations now persist without page refresh
+
 - Jan 20, 2026: Teams Section improvements v2
   - Added member filter in Overview (all/in-flow/online/offline)
   - Added teams preview section in Overview showing first 4 teams
@@ -87,4 +96,8 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Database Migrations
 
-To enable the organizations feature, run the SQL in `migrations/001_organizations.sql` in your Supabase SQL Editor.
+Run these migrations in order in your Supabase SQL Editor:
+
+1. **Organizations** - `migrations/001_organizations.sql` - Creates organizations, members, and invites tables
+2. **RLS Fix** - `migrations/002_fix_rls_policies.sql` - Fixes RLS policy recursion issues
+3. **Kanban** - `migrations/003_kanban_tables.sql` - Creates kanban_columns, kanban_cards, pomodoro_sessions, pomodoro_settings, and active_sessions tables with full RLS policies

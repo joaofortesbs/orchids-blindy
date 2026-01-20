@@ -36,6 +36,7 @@ import { KanbanColumn, KanbanCard, Priority, SubTask } from '@/lib/types/blindad
 interface KanbanBoardProps {
   columns: KanbanColumn[];
   onColumnsChange: (columns: KanbanColumn[]) => void;
+  onUpdateColumn: (columnId: string, updates: { title?: string }) => void;
   onAddColumn: (title: string) => void;
   onDeleteColumn: (columnId: string) => void;
   onAddCard: (columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -320,6 +321,7 @@ function ColumnOverlay({ column }: { column: KanbanColumn }) {
 export function KanbanBoard({
   columns,
   onColumnsChange,
+  onUpdateColumn,
   onAddColumn,
   onDeleteColumn,
   onAddCard,
@@ -561,10 +563,7 @@ export function KanbanBoard({
 
   const handleSaveRename = () => {
     if (renamingColumnId && renameValue.trim()) {
-      const newColumns = columns.map(c =>
-        c.id === renamingColumnId ? { ...c, title: renameValue.trim().toUpperCase() } : c
-      );
-      onColumnsChange(newColumns);
+      onUpdateColumn(renamingColumnId, { title: renameValue.trim() });
     }
     setRenamingColumnId(null);
     setRenameValue('');

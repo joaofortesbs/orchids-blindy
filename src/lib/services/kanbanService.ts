@@ -3,51 +3,68 @@ import { KanbanColumn, KanbanCard } from '@/lib/types/blindados';
 
 const DEFAULT_COLUMNS = ['A FAZER', 'EM PROGRESSO', 'CONCLUÍDO'];
 
+export interface KanbanOperationResult<T = void> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
 export class KanbanService {
   constructor(private supabase: SupabaseClient, private userId: string) {}
 
   async loadColumns(): Promise<KanbanColumn[]> {
-    const { data: columns, error: colError } = await this.supabase
-      .from('kanban_columns')
-      .select('*')
-      .eq('user_id', this.userId)
-      .order('position');
+    try {
+      const { data: columns, error: colError } = await this.supabase
+        .from('kanban_columns')
+        .select('*')
+        .eq('user_id', this.userId)
+        .order('position');
 
-    if (colError) throw colError;
+      if (colError) {
+        console.error('KanbanService.loadColumns columns error:', colError.message, colError.hint);
+        throw colError;
+      }
 
-    if (!columns || columns.length === 0) {
-      return this.createDefaultColumns();
-    }
+      if (!columns || columns.length === 0) {
+        return this.createDefaultColumns();
+      }
 
-    const { data: cards, error: cardError } = await this.supabase
-      .from('kanban_cards')
-      .select('*')
-      .eq('user_id', this.userId)
-      .order('position');
+      const { data: cards, error: cardError } = await this.supabase
+        .from('kanban_cards')
+        .select('*')
+        .eq('user_id', this.userId)
+        .order('position');
 
-    if (cardError) throw cardError;
+      if (cardError) {
+        console.error('KanbanService.loadColumns cards error:', cardError.message);
+        throw cardError;
+      }
 
-    const cardsMap = new Map<string, KanbanCard[]>();
-    (cards || []).forEach(card => {
-      const list = cardsMap.get(card.column_id) || [];
-      list.push({
-        id: card.id,
-        title: card.title,
-        description: card.description || '',
-        priority: card.priority as 'alta' | 'media' | 'baixa',
-        tags: card.tags || [],
-        subtasks: card.subtasks || [],
-        createdAt: card.created_at,
-        updatedAt: card.updated_at,
+      const cardsMap = new Map<string, KanbanCard[]>();
+      (cards || []).forEach(card => {
+        const list = cardsMap.get(card.column_id) || [];
+        list.push({
+          id: card.id,
+          title: card.title,
+          description: card.description || '',
+          priority: card.priority as 'alta' | 'media' | 'baixa',
+          tags: card.tags || [],
+          subtasks: card.subtasks || [],
+          createdAt: card.created_at,
+          updatedAt: card.updated_at,
+        });
+        cardsMap.set(card.column_id, list);
       });
-      cardsMap.set(card.column_id, list);
-    });
 
-    return columns.map(col => ({
-      id: col.id,
-      title: col.title,
-      cards: cardsMap.get(col.id) || [],
-    }));
+      return columns.map(col => ({
+        id: col.id,
+        title: col.title,
+        cards: cardsMap.get(col.id) || [],
+      }));
+    } catch (e) {
+      console.error('KanbanService.loadColumns error:', e);
+      throw e;
+    }
   }
 
   private async createDefaultColumns(): Promise<KanbanColumn[]> {
@@ -179,19 +196,51 @@ export class KanbanService {
     return true;
   }
 
-  async updateColumnPositions(columns: { id: string; title: string; position: number }[]): Promise<boolean> {
-    for (const col of columns) {
+  async updateColumn(columnId: string, updates: { title?: string; position?: number }): Promise<boolean> {
+    try {
+      const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (updates.title !== undefined) dbUpdates.title = updates.title.toUpperCase();
+      if (updates.position !== undefined) dbUpdates.position = updates.position;
+
       const { error } = await this.supabase
         .from('kanban_columns')
-        .update({ position: col.position, title: col.title })
-        .eq('id', col.id)
+        .update(dbUpdates)
+        .eq('id', columnId)
         .eq('user_id', this.userId);
 
       if (error) {
-        console.error('KanbanService.updateColumnPositions error:', error.message);
+        console.error('KanbanService.updateColumn error:', error.message);
         return false;
       }
+      return true;
+    } catch (e) {
+      console.error('KanbanService.updateColumn exception:', e);
+      return false;
     }
-    return true;
+  }
+
+  async updateColumnPositions(columns: { id: string; title: string; position: number }[]): Promise<boolean> {
+    try {
+      const promises = columns.map(col => 
+        this.supabase
+          .from('kanban_columns')
+          .update({ position: col.position, title: col.title, updated_at: new Date().toISOString() })
+          .eq('id', col.id)
+          .eq('user_id', this.userId)
+      );
+
+      const results = await Promise.all(promises);
+      
+      for (const result of results) {
+        if (result.error) {
+          console.error('KanbanService.updateColumnPositions error:', result.error.message);
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      console.error('KanbanService.updateColumnPositions exception:', e);
+      return false;
+    }
   }
 }
