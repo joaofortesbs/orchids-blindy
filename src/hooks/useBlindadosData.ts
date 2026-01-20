@@ -317,38 +317,35 @@ export function useBlindadosData() {
           }),
         });
         
-        if (res.ok) {
-          const result = await res.json();
+        const result = await res.json().catch(() => ({ success: false, error: 'Invalid JSON response' }));
+        
+        if (res.ok && result.success && result.card) {
+          console.log('[useBlindadosData] addKanbanCard: SUCCESS on attempt', attempt, '- Card ID:', result.card.id);
           
-          if (result.success && result.card) {
-            console.log('[useBlindadosData] addKanbanCard: SUCCESS on attempt', attempt, '- Card ID:', result.card.id);
-            
-            setData(prev => {
-              const updated = {
-                ...prev,
-                kanban: {
-                  columns: prev.kanban.columns.map(c =>
-                    c.id === columnId 
-                      ? { ...c, cards: c.cards.map(existingCard => 
-                          existingCard.id === tempId ? result.card : existingCard
-                        )}
-                      : c
-                  ),
-                },
-                lastUpdated: new Date().toISOString(),
-              };
-              setCache(updated);
-              return updated;
-            });
-            
-            pendingOperationsRef.current--;
-            console.log('[useBlindadosData] addKanbanCard: Completed - Pending ops:', pendingOperationsRef.current);
-            return;
-          }
+          setData(prev => {
+            const updated = {
+              ...prev,
+              kanban: {
+                columns: prev.kanban.columns.map(c =>
+                  c.id === columnId 
+                    ? { ...c, cards: c.cards.map(existingCard => 
+                        existingCard.id === tempId ? result.card : existingCard
+                      )}
+                    : c
+                ),
+              },
+              lastUpdated: new Date().toISOString(),
+            };
+            setCache(updated);
+            return updated;
+          });
+          
+          pendingOperationsRef.current--;
+          console.log('[useBlindadosData] addKanbanCard: Completed - Pending ops:', pendingOperationsRef.current);
+          return;
         }
         
-        const errorData = await res.json().catch(() => ({}));
-        lastError = new Error(`HTTP ${res.status}: ${errorData.error || 'Unknown error'}`);
+        lastError = new Error(`HTTP ${res.status}: ${result.error || 'Unknown error'}`);
         console.warn('[useBlindadosData] addKanbanCard: Attempt', attempt, 'failed:', lastError.message);
         
       } catch (e) {
@@ -383,7 +380,10 @@ export function useBlindadosData() {
     
     pendingOperationsRef.current--;
     console.log('[useBlindadosData] addKanbanCard: Failed - Pending ops:', pendingOperationsRef.current);
-  }, []);
+    
+    console.log('[useBlindadosData] addKanbanCard: Triggering re-sync from database...');
+    setTimeout(() => loadData(true), 1000);
+  }, [loadData]);
 
   const updateKanbanCard = useCallback(async (columnId: string, cardId: string, updates: Partial<KanbanCard>) => {
     const kanbanService = servicesRef.current.kanban;

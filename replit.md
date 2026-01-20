@@ -45,6 +45,14 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: ADD CARD PERSISTENCE v18 - Cards no longer disappear
+  - CRITICAL: Created /api/kanban/add-card route using service role key
+  - addKanbanCard now uses API route instead of client-side Supabase
+  - 3 retries with exponential backoff (500ms, 1s, 2s delays)
+  - Detailed logging at every step for debugging
+  - Re-sync from database on failure to ensure consistency
+  - All card operations now use robust server-side API routes
+
 - Jan 20, 2026: SERVICE ROLE AUTH FIX v17 - Full persistence working
   - CRITICAL BUG FIXED: RPCs used auth.uid() but Service Role has NO auth identity
   - NEW MIGRATION 007: All RPC functions now accept p_user_id as first parameter
