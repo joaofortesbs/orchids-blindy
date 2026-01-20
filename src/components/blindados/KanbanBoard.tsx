@@ -562,26 +562,37 @@ export function KanbanBoard({
   };
 
   const handleAddColumn = () => {
-    if (newColumnTitle.trim()) {
-      onAddColumn(newColumnTitle.trim());
-      setNewColumnTitle('');
-      setShowAddColumn(false);
-    }
+    const title = newColumnTitle.trim();
+    if (!title) return;
+    
+    // Immediately clear and close to prevent double-clicks
+    setNewColumnTitle('');
+    setShowAddColumn(false);
+    
+    // Fire and forget - optimistic update handles UI instantly
+    onAddColumn(title);
   };
 
   const handleAddCard = (columnId: string) => {
-    if (newCardTitle.trim()) {
-      onAddCard(columnId, {
-        title: newCardTitle.trim(),
-        description: '',
-        priority: newCardPriority,
-        tags: [],
-        subtasks: [],
-      });
-      setNewCardTitle('');
-      setNewCardPriority('media');
-      setAddingCardToColumn(null);
-    }
+    const title = newCardTitle.trim();
+    if (!title) return;
+    
+    // Capture priority before resetting
+    const priority = newCardPriority;
+    
+    // Immediately clear and close to prevent double-clicks
+    setNewCardTitle('');
+    setNewCardPriority('media');
+    setAddingCardToColumn(null);
+    
+    // Fire and forget - optimistic update handles UI instantly
+    onAddCard(columnId, {
+      title,
+      description: '',
+      priority,
+      tags: [],
+      subtasks: [],
+    });
   };
 
   const handleRenameColumn = (columnId: string) => {

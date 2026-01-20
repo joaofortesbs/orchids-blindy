@@ -121,14 +121,49 @@ export function useBlindadosData() {
     
     const position = dataRef.current.kanban.columns.length;
     
+    // Create optimistic column with temporary ID
+    const tempId = `temp-col-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const optimisticColumn: KanbanColumn = {
+      id: tempId,
+      title: title.toUpperCase(),
+      cards: [],
+    };
+    
+    // Optimistic update - instantly show the column
+    setData(prev => {
+      const updated = {
+        ...prev,
+        kanban: { columns: [...prev.kanban.columns, optimisticColumn] },
+        lastUpdated: new Date().toISOString(),
+      };
+      setCache(updated);
+      return updated;
+    });
+    
     try {
       const newColumn = await kanbanService.addColumn(title, position);
       
       if (newColumn) {
+        // Replace temporary column with real column from database
         setData(prev => {
           const updated = {
             ...prev,
-            kanban: { columns: [...prev.kanban.columns, newColumn] },
+            kanban: { 
+              columns: prev.kanban.columns.map(c => 
+                c.id === tempId ? newColumn : c
+              ) 
+            },
+            lastUpdated: new Date().toISOString(),
+          };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        // Failed - remove optimistic column
+        setData(prev => {
+          const updated = {
+            ...prev,
+            kanban: { columns: prev.kanban.columns.filter(c => c.id !== tempId) },
             lastUpdated: new Date().toISOString(),
           };
           setCache(updated);
@@ -137,6 +172,16 @@ export function useBlindadosData() {
       }
     } catch (e) {
       console.error('addKanbanColumn error:', e);
+      // Remove optimistic column on error
+      setData(prev => {
+        const updated = {
+          ...prev,
+          kanban: { columns: prev.kanban.columns.filter(c => c.id !== tempId) },
+          lastUpdated: new Date().toISOString(),
+        };
+        setCache(updated);
+        return updated;
+      });
     }
   }, []);
 
@@ -175,17 +220,69 @@ export function useBlindadosData() {
     }
     
     const position = column.cards.length;
+    const now = new Date().toISOString();
     
+    // Create optimistic card with temporary ID for instant UI update
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const optimisticCard: KanbanCard = {
+      id: tempId,
+      title: card.title,
+      description: card.description || '',
+      priority: card.priority || 'media',
+      tags: card.tags || [],
+      subtasks: card.subtasks || [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    
+    // Optimistic update - instantly show the card
+    setData(prev => {
+      const updated = {
+        ...prev,
+        kanban: {
+          columns: prev.kanban.columns.map(c =>
+            c.id === columnId ? { ...c, cards: [...c.cards, optimisticCard] } : c
+          ),
+        },
+        lastUpdated: now,
+      };
+      setCache(updated);
+      return updated;
+    });
+    
+    // Save to database in background
     try {
       const newCard = await kanbanService.addCard(columnId, card, position);
       
       if (newCard) {
+        // Replace temporary card with real card from database
         setData(prev => {
           const updated = {
             ...prev,
             kanban: {
               columns: prev.kanban.columns.map(c =>
-                c.id === columnId ? { ...c, cards: [...c.cards, newCard] } : c
+                c.id === columnId 
+                  ? { ...c, cards: c.cards.map(existingCard => 
+                      existingCard.id === tempId ? newCard : existingCard
+                    )}
+                  : c
+              ),
+            },
+            lastUpdated: new Date().toISOString(),
+          };
+          setCache(updated);
+          return updated;
+        });
+      } else {
+        // Failed to save - remove the optimistic card
+        setData(prev => {
+          const updated = {
+            ...prev,
+            kanban: {
+              columns: prev.kanban.columns.map(c =>
+                c.id === columnId 
+                  ? { ...c, cards: c.cards.filter(existingCard => existingCard.id !== tempId) }
+                  : c
               ),
             },
             lastUpdated: new Date().toISOString(),
@@ -196,6 +293,22 @@ export function useBlindadosData() {
       }
     } catch (e) {
       console.error('addKanbanCard error:', e);
+      // Remove optimistic card on error
+      setData(prev => {
+        const updated = {
+          ...prev,
+          kanban: {
+            columns: prev.kanban.columns.map(c =>
+              c.id === columnId 
+                ? { ...c, cards: c.cards.filter(existingCard => existingCard.id !== tempId) }
+                : c
+            ),
+          },
+          lastUpdated: new Date().toISOString(),
+        };
+        setCache(updated);
+        return updated;
+      });
     }
   }, []);
 

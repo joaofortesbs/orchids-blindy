@@ -45,6 +45,14 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Kanban performance optimization v4
+  - Implemented optimistic updates for addKanbanCard (instant UI, background save)
+  - Implemented optimistic updates for addKanbanColumn (instant UI, background save)
+  - Cards/columns appear instantly with temporary IDs, replaced by real IDs after DB response
+  - Auto-rollback on failure: if DB save fails, optimistic items are removed
+  - Protected against double-clicks: form clears immediately before async operation
+  - Improved UX: no more waiting for database response to see new items
+
 - Jan 20, 2026: Kanban persistence definitive fix v3
   - Fixed JSONB serialization: tags/subtasks now passed as arrays directly to Supabase (not JSON.stringify)
   - Added rowsAffected verification in updateCard/deleteCard to catch silent RLS failures
