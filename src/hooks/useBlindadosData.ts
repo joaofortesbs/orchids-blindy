@@ -203,13 +203,19 @@ export function useBlindadosData() {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
     
+    // Optimistic update
     setData(prev => {
       const updated = {
         ...prev,
         kanban: {
           columns: prev.kanban.columns.map(c =>
             c.id === columnId
-              ? { ...c, cards: c.cards.map(card => card.id === cardId ? { ...card, ...updates, updatedAt: new Date().toISOString() } : card) }
+              ? { 
+                  ...c, 
+                  cards: c.cards.map(card => 
+                    card.id === cardId ? { ...card, ...updates, updatedAt: new Date().toISOString() } : card
+                  ) 
+                }
               : c
           ),
         },
@@ -220,16 +226,22 @@ export function useBlindadosData() {
     });
     
     try {
-      await kanbanService.updateCard(cardId, updates);
+      const success = await kanbanService.updateCard(cardId, updates);
+      if (!success) {
+        // If failed, reload data to sync with server
+        loadData();
+      }
     } catch (e) {
       console.error('updateKanbanCard error:', e);
+      loadData();
     }
-  }, []);
+  }, [loadData]);
 
   const deleteKanbanCard = useCallback(async (columnId: string, cardId: string) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
     
+    // Optimistic delete
     setData(prev => {
       const updated = {
         ...prev,
@@ -245,11 +257,15 @@ export function useBlindadosData() {
     });
     
     try {
-      await kanbanService.deleteCard(cardId);
+      const success = await kanbanService.deleteCard(cardId);
+      if (!success) {
+        loadData();
+      }
     } catch (e) {
       console.error('deleteKanbanCard error:', e);
+      loadData();
     }
-  }, []);
+  }, [loadData]);
 
   const moveCard = useCallback(async (cardId: string, sourceColId: string, targetColId: string, targetIdx: number) => {
     const kanbanService = servicesRef.current.kanban;

@@ -800,10 +800,13 @@ export function KanbanBoard({
             columnId={editingCard.columnId}
             onUpdate={(updates) => {
               onUpdateCard(editingCard.columnId, editingCard.card.id, updates);
+              setEditingCard(null); // Explicitly close and clear
             }}
             onDelete={() => {
-              onDeleteCard(editingCard.columnId, editingCard.card.id);
-              setEditingCard(null);
+              if (window.confirm('Tem certeza que deseja excluir esta tarefa?')) {
+                onDeleteCard(editingCard.columnId, editingCard.card.id);
+                setEditingCard(null);
+              }
             }}
             onClose={() => setEditingCard(null)}
           />

@@ -148,24 +148,31 @@ export class KanbanService {
   }
 
   async updateCard(cardId: string, updates: Partial<KanbanCard>): Promise<boolean> {
-    const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (updates.title !== undefined) dbUpdates.title = updates.title;
-    if (updates.description !== undefined) dbUpdates.description = updates.description;
-    if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
-    if (updates.tags !== undefined) dbUpdates.tags = updates.tags;
-    if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks;
+    try {
+      const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      
+      // Map frontend fields to DB columns
+      if (updates.title !== undefined) dbUpdates.title = updates.title;
+      if (updates.description !== undefined) dbUpdates.description = updates.description;
+      if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
+      if (updates.tags !== undefined) dbUpdates.tags = JSON.stringify(updates.tags);
+      if (updates.subtasks !== undefined) dbUpdates.subtasks = JSON.stringify(updates.subtasks);
 
-    const { error } = await this.supabase
-      .from('kanban_cards')
-      .update(dbUpdates)
-      .eq('id', cardId)
-      .eq('user_id', this.userId);
+      const { error } = await this.supabase
+        .from('kanban_cards')
+        .update(dbUpdates)
+        .eq('id', cardId)
+        .eq('user_id', this.userId);
 
-    if (error) {
-      console.error('KanbanService.updateCard error:', error.message);
+      if (error) {
+        console.error('KanbanService.updateCard error:', error.message, error.details);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('KanbanService.updateCard exception:', e);
       return false;
     }
-    return true;
   }
 
   async deleteCard(cardId: string): Promise<boolean> {
