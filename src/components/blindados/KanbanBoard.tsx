@@ -426,6 +426,8 @@ export function KanbanBoard({
     const { active } = event;
     const activeData = active.data.current;
     
+    console.log('[KanbanBoard] Drag started:', { id: active.id, type: activeData?.type });
+    
     if (activeData?.type === 'card') {
       setActiveCard(activeData.card);
       setActiveColumnId(activeData.columnId);
@@ -436,8 +438,10 @@ export function KanbanBoard({
         columnId: activeData.columnId,
         index: cardIndex,
       };
+      console.log('[KanbanBoard] Card drag started:', { cardId: activeData.card.id, columnId: activeData.columnId, index: cardIndex });
     } else if (activeData?.type === 'sortable-column') {
       setActiveColumn(activeData.column);
+      console.log('[KanbanBoard] Column drag started:', { columnId: activeData.column.id, title: activeData.column.title });
     }
   };
 
@@ -520,6 +524,8 @@ export function KanbanBoard({
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    
+    console.log('[KanbanBoard] Drag ended:', { activeId: active.id, overId: over?.id, hasActiveColumn: !!activeColumn, hasActiveCard: !!activeCard });
 
     if (activeColumn && over) {
       const activeId = active.id as string;
@@ -539,12 +545,14 @@ export function KanbanBoard({
       const oldIndex = getColumnIndex(activeId);
       const newIndex = getColumnIndex(overId);
 
-      console.log('Column drag end:', { activeId, overId, oldIndex, newIndex });
+      console.log('[KanbanBoard] Column drag end:', { activeId, overId, oldIndex, newIndex });
 
       if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
         const newColumns = arrayMove(columns, oldIndex, newIndex);
-        console.log('Reordering columns:', newColumns.map((c, i) => ({ id: c.id, title: c.title, pos: i })));
+        console.log('[KanbanBoard] Reordering columns - calling onColumnsChange with:', newColumns.map((c, i) => ({ id: c.id, title: c.title, pos: i })));
         onColumnsChange(newColumns);
+      } else {
+        console.log('[KanbanBoard] Column drag end - no reorder needed (same position or invalid indices)');
       }
     }
 
@@ -552,16 +560,22 @@ export function KanbanBoard({
       const original = originalCardPositionRef.current;
       const currentColumnId = activeColumnId;
       
+      console.log('[KanbanBoard] Card drag end:', { cardId: activeCard.id, originalColumnId: original.columnId, currentColumnId });
+      
       if (currentColumnId && original.columnId !== currentColumnId) {
         const targetColumn = columns.find(c => c.id === currentColumnId);
         const targetIndex = targetColumn?.cards.findIndex(c => c.id === activeCard.id) ?? 0;
+        console.log('[KanbanBoard] Card moved to different column - calling onMoveCard:', { cardId: activeCard.id, from: original.columnId, to: currentColumnId, targetIndex });
         onMoveCard(activeCard.id, original.columnId, currentColumnId, targetIndex);
       } else if (currentColumnId && original.columnId === currentColumnId) {
         const column = columns.find(c => c.id === currentColumnId);
         if (column) {
           const newIndex = column.cards.findIndex(c => c.id === activeCard.id);
           if (newIndex !== original.index) {
+            console.log('[KanbanBoard] Card reordered within column - calling onUpdateCardPositions:', { columnId: currentColumnId, cardCount: column.cards.length, cards: column.cards.map((c, i) => ({ id: c.id, pos: i })) });
             onUpdateCardPositions(currentColumnId, column.cards);
+          } else {
+            console.log('[KanbanBoard] Card drag end - no position change');
           }
         }
       }

@@ -6,6 +6,13 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 300;
 const OPERATION_TIMEOUT_MS = 8000;
 
+// Debug mode - set to true to see detailed logs
+const DEBUG = true;
+
+function debugLog(...args: unknown[]) {
+  if (DEBUG) console.log('[KanbanService]', ...args);
+}
+
 export interface KanbanOperationResult<T = void> {
   success: boolean;
   data?: T;
@@ -52,7 +59,29 @@ async function withRetry<T>(
 }
 
 export class KanbanService {
-  constructor(private supabase: SupabaseClient, private userId: string) {}
+  constructor(private supabase: SupabaseClient, private userId: string) {
+    debugLog('Initialized with userId:', userId);
+  }
+
+  // Verify that the user is authenticated and matches the expected userId
+  private async verifyAuth(): Promise<boolean> {
+    try {
+      const { data: { user } } = await this.supabase.auth.getUser();
+      if (!user) {
+        console.error('[KanbanService] No authenticated user found');
+        return false;
+      }
+      if (user.id !== this.userId) {
+        console.error('[KanbanService] User ID mismatch:', { expected: this.userId, actual: user.id });
+        return false;
+      }
+      debugLog('Auth verified for user:', user.id);
+      return true;
+    } catch (e) {
+      console.error('[KanbanService] Auth verification failed:', e);
+      return false;
+    }
+  }
 
   async loadColumns(): Promise<KanbanColumn[]> {
     try {
@@ -315,69 +344,124 @@ export class KanbanService {
 
   async updateColumnPositions(columns: { id: string; title: string; position: number }[]): Promise<boolean> {
     if (columns.length === 0) {
-      console.log('KanbanService.updateColumnPositions: No columns to update');
+      debugLog('updateColumnPositions: No columns to update');
       return true;
     }
     
-    console.log('KanbanService.updateColumnPositions: Updating', columns.length, 'columns:', columns.map(c => ({ id: c.id, pos: c.position })));
+    debugLog('updateColumnPositions: Starting update for', columns.length, 'columns');
+    debugLog('updateColumnPositions: Column data:', JSON.stringify(columns.map(c => ({ id: c.id, title: c.title, pos: c.position }))));
+    
+    // Verify authentication first
+    const isAuthenticated = await this.verifyAuth();
+    if (!isAuthenticated) {
+      console.error('[KanbanService] updateColumnPositions: Authentication failed');
+      return false;
+    }
     
     try {
       return await withRetry(async () => {
-        const promises = columns.map(col => 
-          this.supabase
+        let allSuccess = true;
+        
+        // Process columns one by one for better error tracking
+        for (let i = 0; i < columns.length; i++) {
+          const col = columns[i];
+          debugLog(`updateColumnPositions: Updating column ${i + 1}/${columns.length}:`, col.id, 'to position', col.position);
+          
+          const { data, error } = await this.supabase
             .from('kanban_columns')
-            .update({ position: col.position, title: col.title, updated_at: new Date().toISOString() })
+            .update({ 
+              position: col.position, 
+              title: col.title, 
+              updated_at: new Date().toISOString() 
+            })
             .eq('id', col.id)
             .eq('user_id', this.userId)
-            .select()
-        );
-
-        const results = await Promise.all(promises);
-        
-        for (let i = 0; i < results.length; i++) {
-          const result = results[i];
-          if (result.error) {
-            console.error('KanbanService.updateColumnPositions error for column', columns[i].id, ':', result.error.message);
-            throw result.error;
+            .select();
+          
+          if (error) {
+            console.error('[KanbanService] updateColumnPositions error for column', col.id, ':', error.message, error.hint, error.details);
+            throw error;
           }
-          const rowsAffected = result.data?.length || 0;
+          
+          const rowsAffected = data?.length || 0;
+          debugLog(`updateColumnPositions: Column ${col.id} - rows affected:`, rowsAffected);
+          
           if (rowsAffected === 0) {
-            console.error('KanbanService.updateColumnPositions: No rows affected for column', columns[i].id);
+            console.error('[KanbanService] updateColumnPositions: No rows affected for column', col.id, '- RLS may be blocking update');
+            allSuccess = false;
           }
         }
         
-        console.log('KanbanService.updateColumnPositions: Success');
-        return true;
+        if (allSuccess) {
+          debugLog('updateColumnPositions: SUCCESS - All columns updated');
+        } else {
+          console.error('[KanbanService] updateColumnPositions: Some columns were not updated');
+        }
+        
+        return allSuccess;
       });
     } catch (e) {
-      console.error('KanbanService.updateColumnPositions failed after retries:', e);
+      console.error('[KanbanService] updateColumnPositions failed after retries:', e);
       return false;
     }
   }
 
   async updateCardPositions(columnId: string, cards: { id: string; position: number }[]): Promise<boolean> {
+    if (cards.length === 0) {
+      debugLog('updateCardPositions: No cards to update');
+      return true;
+    }
+    
+    debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId);
+    
+    // Verify authentication first
+    const isAuthenticated = await this.verifyAuth();
+    if (!isAuthenticated) {
+      console.error('[KanbanService] updateCardPositions: Authentication failed');
+      return false;
+    }
+    
     try {
       return await withRetry(async () => {
-        const promises = cards.map(card =>
-          this.supabase
+        let allSuccess = true;
+        
+        for (let i = 0; i < cards.length; i++) {
+          const card = cards[i];
+          debugLog(`updateCardPositions: Updating card ${i + 1}/${cards.length}:`, card.id, 'to position', card.position);
+          
+          const { data, error } = await this.supabase
             .from('kanban_cards')
-            .update({ position: card.position, column_id: columnId, updated_at: new Date().toISOString() })
+            .update({ 
+              position: card.position, 
+              column_id: columnId, 
+              updated_at: new Date().toISOString() 
+            })
             .eq('id', card.id)
             .eq('user_id', this.userId)
-        );
+            .select();
 
-        const results = await Promise.all(promises);
-
-        for (const result of results) {
-          if (result.error) {
-            console.error('KanbanService.updateCardPositions error:', result.error.message);
-            throw result.error;
+          if (error) {
+            console.error('[KanbanService] updateCardPositions error for card', card.id, ':', error.message);
+            throw error;
+          }
+          
+          const rowsAffected = data?.length || 0;
+          debugLog(`updateCardPositions: Card ${card.id} - rows affected:`, rowsAffected);
+          
+          if (rowsAffected === 0) {
+            console.error('[KanbanService] updateCardPositions: No rows affected for card', card.id, '- RLS may be blocking update');
+            allSuccess = false;
           }
         }
-        return true;
+        
+        if (allSuccess) {
+          debugLog('updateCardPositions: SUCCESS - All cards updated');
+        }
+        
+        return allSuccess;
       });
     } catch (e) {
-      console.error('KanbanService.updateCardPositions failed after retries:', e);
+      console.error('[KanbanService] updateCardPositions failed after retries:', e);
       return false;
     }
   }
