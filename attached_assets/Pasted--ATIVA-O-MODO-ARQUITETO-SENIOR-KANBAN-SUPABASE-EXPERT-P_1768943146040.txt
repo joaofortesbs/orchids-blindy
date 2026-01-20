@@ -1,0 +1,320 @@
+🔥 ATIVAÇÃO: MODO ARQUITETO SENIOR KANBAN + SUPABASE EXPERT + PERFORMANCE ENGINEER
+
+CONTEXTO CRÍTICO (baseado no histórico do Replit):
+- Projeto: orchids-blindy (Next.js + Supabase + dnd-kit)
+- ✅ Colunas reordenam e persistem
+- ❌ Cards movem visualmente mas **NÃO PERSISTEM** no banco após reload/sync
+- ❌ Sync automático reverte tudo (useBlindadosData + intervalos conflitantes)
+- ❌ Flickering resolvido parcialmente, mas persistência falha
+- Migrations executadas: 001_organizations.sql → 005_complete_kanban_fix.sql
+- Commits recentes mostram tentativas repetidas sem sucesso completo
+
+## MISSÃO: SISTEMA DE SALVAMENTO ULTRA-RÁPIDO E IMBATÍVEL
+
+Construa sistema de persistência **1000x mais robusto** que implementações comuns, com:
+
+### 1. ARQUITETURA DE ESTADO (Zustand + Optimistic + Queue)
+Estado Global: Zustand store com:
+├── localState (UI instantânea)
+├── remoteState (banco)
+├── pendingQueue (operações em fila)
+├── syncStatus (pending:0/1, error, lastSync)
+└── optimisticCache (rollback point)
+
+text
+
+### 2. FLUXO ATÔMICO DE MOVIMENTAÇÃO (Zero Revert)
+DRAG (1ms):
+→ Zustand optimistic update (UI instantânea)
+→ Enfileira operação na pendingQueue
+
+QUEUE PROCESS (5ms):
+→ RPC atômica move_card(card_id, target_col, position)
+→ Se sucesso: confirma na queue, atualiza remoteState
+→ Se erro: rollback local + retry (3x com exponential backoff)
+
+SYNC (60s):
+→ SÓ se pendingQueue === 0
+→ Merge local + remote (prioriza local se mais novo)
+
+text
+
+## INVESTIGAÇÃO SISTEMÁTICA (Execute esta checklist)
+
+### FASE 1: AUDITORIA COMPLETA (todos os arquivos)
+[ ] 1. src/hooks/useBlindadosData.ts (ou equivalente)
+- Localizar TODOS os useEffect/setInterval
+- Identificar lógica que chama loadData() ou setColumns/setTasks
+- Flag pendingOps existe? Funciona?
+
+[ ] 2. Componentes Kanban (BlindadosBoard, Column, TaskCard)
+- handleDragEnd → moveCard → quais funções chama?
+- onColumnsChange → optimistic update?
+- Estado local conflita com global?
+
+[ ] 3. API Routes (app/api/kanban ou supabase client calls)
+- Existe /move-card? Chama RPC correta?
+- Tratamento de erro correto? (rollback?)
+
+[ ] 4. Supabase (SQL Editor → verificar):
+- SELECT * FROM tasks LIMIT 5 → column_id existe e é correto?
+- SELECT policies FROM pg_policies WHERE tablename='tasks';
+- Teste manual: UPDATE tasks SET column_id='xxx' WHERE id='yyy';
+
+text
+
+### FASE 2: SISTEMA DE PERSISTÊNCIA ULTRA-RÁPIDO
+
+#### A) INSTALE DEPENDÊNCIAS (se necessário)
+```bash
+npm i zustand idb-keyval @supabase/ssr
+B) ESTADO GLOBAL (src/store/kanbanStore.ts - NOVO)
+typescript
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { devtools } from 'zustand/middleware';
+
+interface CardMove {
+  id: string;
+  columnId: string;
+  position: number;
+  timestamp: number;
+}
+
+interface KanbanState {
+  // Estados
+  columns: Column[];
+  tasks: Task[];
+  pendingOps: number;
+  lastSync: number;
+  queue: CardMove[];
+  
+  // Ações
+  optimisticMoveCard: (id: string, columnId: string, pos: number) => void;
+  confirmMove: (id: string) => void;
+  processQueue: () => Promise<void>;
+  forceSync: () => Promise<void>;
+}
+
+export const useKanbanStore = create<KanbanState>()(
+  devtools(
+    persist(
+      (set, get) => ({
+        columns: [],
+        tasks: [],
+        pendingOps: 0,
+        lastSync: 0,
+        queue: [],
+        
+        optimisticMoveCard: (id, columnId, pos) => {
+          set((state) => ({
+            tasks: state.tasks.map(task =>
+              task.id === id 
+                ? { ...task, column_id: columnId, task_order: pos }
+                : task
+            ),
+            pendingOps: state.pendingOps + 1,
+            queue: [...state.queue, { id, columnId, pos, timestamp: Date.now() }]
+          }));
+        },
+        
+        confirmMove: (id) => {
+          set((state) => ({
+            pendingOps: state.pendingOps - 1,
+            queue: state.queue.filter(op => op.id !== id)
+          }));
+        },
+        
+        processQueue: async () => {
+          const { queue, confirmMove } = get();
+          if (queue.length === 0) return;
+          
+          for (const op of queue) {
+            try {
+              const res = await fetch('/api/kanban/move-card', {
+                method: 'POST',
+                body: JSON.stringify(op)
+              });
+              
+              if (res.ok) confirmMove(op.id);
+              else throw new Error('Persist failed');
+            } catch (error) {
+              console.error('Queue op failed:', op, error);
+              // Retry logic aqui
+            }
+          }
+        }
+      }),
+      {
+        name: 'kanban-storage',
+        partialize: (state) => ({ columns: state.columns, tasks: state.tasks })
+      }
+    )
+  )
+);
+C) API ROUTE ATÔMICA (app/api/kanban/move-card/route.ts)
+typescript
+import { createClient } from '@/utils/supabase/server';
+import { NextRequest, NextResponse } from 'next/server';
+
+export async function POST(req: NextRequest) {
+  const { id, columnId, position } = await req.json();
+  
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  
+  // RPC atômica - SEMPRE FUNCIONA
+  const { error } = await supabase.rpc('move_card', {
+    p_task_id: id,
+    p_target_column_id: columnId,
+    p_new_position: position
+  });
+  
+  if (error) {
+    console.error('RPC error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  
+  return NextResponse.json({ success: true });
+}
+D) HOOK OTIMIZADO (src/hooks/useBlindadosData.ts - REESCREVA)
+typescript
+'use client';
+import { useEffect, useCallback } from 'react';
+import { useKanbanStore } from '@/store/kanbanStore';
+
+export function useBlindadosData(boardId: string) {
+  const {
+    columns, tasks, pendingOps, queue,
+    optimisticMoveCard, processQueue, forceSync
+  } = useKanbanStore();
+  
+  // Drag handlers
+  const handleDragEnd = (result) => {
+    const { active, over } = result;
+    if (!over || !over.data.current?.columnId) return;
+    
+    const taskId = active.id;
+    const targetCol = over.data.current.columnId;
+    const newPos = over.data.current.position;
+    
+    // 1. UI instantânea
+    optimisticMoveCard(taskId, targetCol, newPos);
+    
+    // 2. Processa queue (background)
+    processQueue();
+  };
+  
+  // Sync SÓ quando idle
+  useEffect(() => {
+    if (pendingOps === 0 && queue.length === 0) {
+      const timeout = setTimeout(() => forceSync(), 60000);
+      return () => clearTimeout(timeout);
+    }
+  }, [pendingOps, queue.length]);
+  
+  return {
+    columns, tasks,
+    onDragEnd: handleDragEnd,
+    isSyncing: pendingOps > 0 || queue.length > 0,
+    syncStatus: { pendingOps, queueLength: queue.length }
+  };
+}
+FASE 3: SUPABASE ULTRA-OTIMIZADO (Execute SQL)
+sql
+-- 006_ultimate_kanban_persistence.sql
+BEGIN;
+
+-- 1. Função RPC IMBATÍVEL
+DROP FUNCTION IF EXISTS move_card(uuid, uuid, integer);
+CREATE OR REPLACE FUNCTION move_card(
+  p_task_id uuid,
+  p_target_column_id uuid,
+  p_new_position integer
+)
+RETURNS jsonb AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_result jsonb;
+BEGIN
+  -- Transação atômica
+  UPDATE tasks
+  SET 
+    column_id = p_target_column_id,
+    task_order = p_new_position,
+    updated_at = now()
+  WHERE id = p_task_id AND (
+    user_id = v_user_id OR 
+    EXISTS (SELECT 1 FROM columns WHERE id = p_target_column_id AND user_id = v_user_id)
+  );
+  
+  GET DIAGNOSTICS v_result = ROW_COUNT;
+  
+  RETURN jsonb_build_object(
+    'success', (SELECT count(*) FROM tasks WHERE id = p_task_id),
+    'rows_affected', v_result
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 2. RLS IMPECÁVEL
+DROP POLICY IF EXISTS "kanban_users_update_tasks" ON tasks;
+CREATE POLICY "kanban_users_update_tasks" ON tasks
+FOR UPDATE TO authenticated
+USING (
+  auth.uid() = user_id OR
+  column_id IN (
+    SELECT id FROM columns WHERE user_id = auth.uid()
+  )
+);
+
+-- 3. ÍNDICES DE PERFORMANCE EXTREMA
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tasks_user_column_order 
+ON tasks (user_id, column_id, task_order);
+
+COMMIT;
+FASE 4: COMPONENTE KANBAN (BlindadosBoard.tsx)
+typescript
+// Simplificado - usa o store global
+function BlindadosBoard({ boardId }) {
+  const { columns, tasks, onDragEnd, isSyncing } = useBlindadosData(boardId);
+  
+  return (
+    <DndContext onDragEnd={onDragEnd}>
+      <div className="kanban-grid">
+        {columns.map(col => (
+          <Column 
+            key={col.id}
+            column={col}
+            tasks={tasks.filter(t => t.column_id === col.id)}
+            isSyncing={isSyncing}
+          />
+        ))}
+      </div>
+      {isSyncing && <SyncIndicator />}
+    </DndContext>
+  );
+}
+VERIFICAÇÃO FINAL (Execute estes testes)
+✅ Arraste card → UI atualiza instantânea
+
+✅ Console mostra pendingOps: 1 → 0
+
+✅ F5 → Card está na posição correta
+
+✅ Aguarde 2min → Não reverte
+
+✅ DevTools → Network mostra /api/kanban/move-card 200 OK
+
+CRITÉRIOS DE SUCESSO ABSOLUTO
+text
+✅ Zero flickering
+✅ Persistência 100% após F5
+✅ Sync não reverte alterações
+✅ Console limpo (sem erros)
+✅ <50ms latência visual
+✅ Suporta 1000+ cards sem lag
+✅ RLS segura (bloqueia outros users)
+EXECUTE IMEDIATAMENTE. Este é o sistema definitivo. Se ainda falhar, o problema é conexão Supabase (secrets).
