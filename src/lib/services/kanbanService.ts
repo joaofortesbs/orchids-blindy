@@ -151,23 +151,28 @@ export class KanbanService {
     try {
       const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
       
-      // Map frontend fields to DB columns
+      // Map frontend fields to DB columns - JSONB columns receive arrays directly
       if (updates.title !== undefined) dbUpdates.title = updates.title;
       if (updates.description !== undefined) dbUpdates.description = updates.description;
       if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
-      if (updates.tags !== undefined) dbUpdates.tags = JSON.stringify(updates.tags);
-      if (updates.subtasks !== undefined) dbUpdates.subtasks = JSON.stringify(updates.subtasks);
+      if (updates.tags !== undefined) dbUpdates.tags = updates.tags; // JSONB - pass array directly
+      if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks; // JSONB - pass array directly
 
-      const { error } = await this.supabase
+      console.log('KanbanService.updateCard: Updating card', cardId, 'with:', dbUpdates);
+
+      const { data, error } = await this.supabase
         .from('kanban_cards')
         .update(dbUpdates)
         .eq('id', cardId)
-        .eq('user_id', this.userId);
+        .eq('user_id', this.userId)
+        .select();
 
       if (error) {
-        console.error('KanbanService.updateCard error:', error.message, error.details);
+        console.error('KanbanService.updateCard error:', error.message, error.details, error.code);
         return false;
       }
+      
+      console.log('KanbanService.updateCard: Success, updated rows:', data?.length || 0);
       return true;
     } catch (e) {
       console.error('KanbanService.updateCard exception:', e);
@@ -176,17 +181,27 @@ export class KanbanService {
   }
 
   async deleteCard(cardId: string): Promise<boolean> {
-    const { error } = await this.supabase
-      .from('kanban_cards')
-      .delete()
-      .eq('id', cardId)
-      .eq('user_id', this.userId);
+    try {
+      console.log('KanbanService.deleteCard: Deleting card', cardId);
+      
+      const { data, error, count } = await this.supabase
+        .from('kanban_cards')
+        .delete()
+        .eq('id', cardId)
+        .eq('user_id', this.userId)
+        .select();
 
-    if (error) {
-      console.error('KanbanService.deleteCard error:', error.message);
+      if (error) {
+        console.error('KanbanService.deleteCard error:', error.message, error.details, error.code);
+        return false;
+      }
+      
+      console.log('KanbanService.deleteCard: Success, deleted rows:', data?.length || 0);
+      return true;
+    } catch (e) {
+      console.error('KanbanService.deleteCard exception:', e);
       return false;
     }
-    return true;
   }
 
   async moveCard(cardId: string, targetColumnId: string, position: number): Promise<boolean> {

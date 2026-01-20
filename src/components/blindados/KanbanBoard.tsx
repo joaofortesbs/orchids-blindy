@@ -838,6 +838,7 @@ function EditCardModal({
   const [newSubtask, setNewSubtask] = useState('');
 
   const handleSave = () => {
+    console.log('EditCardModal: Saving card with updates:', { title, description, priority, tags, subtasks });
     onUpdate({
       title,
       description,
@@ -845,7 +846,7 @@ function EditCardModal({
       tags,
       subtasks,
     });
-    onClose();
+    // Note: onUpdate already closes the modal, don't call onClose() here
   };
 
   const addTag = () => {
