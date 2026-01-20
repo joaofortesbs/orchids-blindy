@@ -45,6 +45,12 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Timer fixes and data cleanup
+  - Fixed Pomodoro settings not updating countdown immediately when changed
+  - Added real-time live session sync (updates chart every second during timer)
+  - Added cleanupInvalidSessions function to remove corrupted time entries (>120min)
+  - Fixed allowedDevOrigins for Replit proxy
+
 - Jan 20, 2026: Organization management system v2
   - Added "Membros" and "Equipes" sections in sidebar when organization is selected
   - Improved error handling for organization creation with detailed messages

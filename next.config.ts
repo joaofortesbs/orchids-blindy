@@ -30,8 +30,9 @@ const nextConfig: NextConfig = {
     }
   },
   allowedDevOrigins: [
-    '*.replit.dev',
-    '*.replit.app',
+    '.replit.dev',
+    '.replit.app',
+    '.spock.replit.dev',
     'localhost:5000',
   ],
 };
