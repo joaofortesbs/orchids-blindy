@@ -525,11 +525,25 @@ export function KanbanBoard({
       const activeId = active.id as string;
       const overId = over.id as string;
 
-      const oldIndex = columns.findIndex(c => `column-${c.id}` === activeId);
-      const newIndex = columns.findIndex(c => `column-${c.id}` === overId);
+      // Extract column ID from either "column-{id}" or just "{id}" format
+      const getColumnIndex = (id: string) => {
+        // Try with prefix first
+        let index = columns.findIndex(c => `column-${c.id}` === id);
+        if (index === -1) {
+          // Try without prefix (from DroppableColumn)
+          index = columns.findIndex(c => c.id === id);
+        }
+        return index;
+      };
+
+      const oldIndex = getColumnIndex(activeId);
+      const newIndex = getColumnIndex(overId);
+
+      console.log('Column drag end:', { activeId, overId, oldIndex, newIndex });
 
       if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
         const newColumns = arrayMove(columns, oldIndex, newIndex);
+        console.log('Reordering columns:', newColumns.map((c, i) => ({ id: c.id, title: c.title, pos: i })));
         onColumnsChange(newColumns);
       }
     }

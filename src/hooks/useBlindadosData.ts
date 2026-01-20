@@ -506,14 +506,34 @@ export function useBlindadosData() {
 
   const updateCardPositions = useCallback(async (columnId: string, cards: KanbanCard[]) => {
     const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) return;
+    if (!kanbanService) {
+      console.error('updateCardPositions: service not available');
+      return;
+    }
+
+    // Filter out temporary cards
+    const validCards = cards.filter(c => !c.id.startsWith('temp-'));
+    const hasTemporaryCards = cards.some(c => c.id.startsWith('temp-'));
+    
+    if (hasTemporaryCards) {
+      console.log('updateCardPositions: Skipping persistence - has temporary cards');
+      return;
+    }
+
+    console.log('updateCardPositions: Persisting', validCards.length, 'card positions in column', columnId);
 
     try {
-      await kanbanService.updateCardPositions(columnId, cards.map((c, i) => ({ id: c.id, position: i })));
+      const success = await kanbanService.updateCardPositions(columnId, validCards.map((c, i) => ({ id: c.id, position: i })));
+      console.log('updateCardPositions: Persistence result:', success);
+      if (!success) {
+        console.error('updateCardPositions: Failed to persist - reloading data');
+        loadData();
+      }
     } catch (e) {
       console.error('updateCardPositions error:', e);
+      loadData();
     }
-  }, []);
+  }, [loadData]);
 
   const addPomodoroSession = useCallback(async (session: Omit<PomodoroSession, 'id'>) => {
     const pomodoroService = servicesRef.current.pomodoro;
