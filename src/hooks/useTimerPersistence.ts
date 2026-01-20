@@ -4,9 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { timerSyncManager } from '@/lib/utils/timerSync';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/contexts/AuthContext';
-
-const TIMER_STORAGE_KEY = 'blindados_timer_state_v8';
-const TIMER_BACKUP_KEY = 'blindados_timer_backup_v8';
+import { safeStorage } from '@/lib/utils/safeStorage';
+import { STORAGE_KEYS } from '@/lib/utils/storage.constants';
 
 export interface TimerState {
   isRunning: boolean;
@@ -35,37 +34,21 @@ const DEFAULT_TIMER_STATE: TimerState = {
   lastUpdated: Date.now(),
 };
 
-function safeStorage() {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage; } catch { return null; }
-}
-
 function saveTimerState(state: TimerState): void {
-  const storage = safeStorage();
-  if (!storage) return;
-  try {
-    const current = storage.getItem(TIMER_STORAGE_KEY);
-    if (current) storage.setItem(TIMER_BACKUP_KEY, current);
-    storage.setItem(TIMER_STORAGE_KEY, JSON.stringify({ ...state, lastUpdated: Date.now() }));
-  } catch {}
+  const current = safeStorage.get<TimerState>(STORAGE_KEYS.TIMER_STATE);
+  if (current) {
+    safeStorage.set(STORAGE_KEYS.TIMER_BACKUP, current);
+  }
+  safeStorage.set(STORAGE_KEYS.TIMER_STATE, { ...state, lastUpdated: Date.now() });
 }
 
 function loadTimerState(): TimerState | null {
-  const storage = safeStorage();
-  if (!storage) return null;
-  try {
-    const stored = storage.getItem(TIMER_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch { return null; }
+  return safeStorage.get<TimerState>(STORAGE_KEYS.TIMER_STATE);
 }
 
 function clearTimerStorage(): void {
-  const storage = safeStorage();
-  if (!storage) return;
-  try {
-    storage.removeItem(TIMER_STORAGE_KEY);
-    storage.removeItem(TIMER_BACKUP_KEY);
-  } catch {}
+  safeStorage.remove(STORAGE_KEYS.TIMER_STATE);
+  safeStorage.remove(STORAGE_KEYS.TIMER_BACKUP);
 }
 
 export function useTimerPersistence(
@@ -212,15 +195,19 @@ export function useTimerPersistence(
     if (!isLoaded) return;
 
     if (timerState.isRunning) {
-      intervalRef.current = setInterval(() => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      
+      const tick = () => {
         const state = timerStateRef.current;
-        const elapsed = calculateElapsedSeconds(state);
+        if (!state.isRunning || !state.startedAt) return;
+        
+        const elapsed = state.accumulatedSeconds + Math.floor((Date.now() - state.startedAt) / 1000);
         const remaining = Math.max(0, state.totalDurationSeconds - elapsed);
         
         setTimeLeft(remaining);
-        syncLiveSession(state);
-        saveTimerState(state);
-
+        
         if (remaining <= 0) {
           const completedState: TimerState = {
             ...state,
@@ -232,12 +219,16 @@ export function useTimerPersistence(
           setTimerState(completedState);
           clearTimerStorage();
           syncToSupabase(completedState);
+          syncLiveSession(completedState);
           
           if (onSessionComplete) {
             onSessionComplete(state.categoryId, Math.floor(state.totalDurationSeconds / 60));
           }
         }
-      }, 1000);
+      };
+      
+      tick();
+      intervalRef.current = setInterval(tick, 1000);
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -251,7 +242,7 @@ export function useTimerPersistence(
         intervalRef.current = null;
       }
     };
-  }, [timerState.isRunning, isLoaded, onSessionComplete, calculateElapsedSeconds, syncLiveSession, syncToSupabase]);
+  }, [timerState.isRunning, isLoaded, onSessionComplete, syncLiveSession, syncToSupabase]);
 
   useEffect(() => {
     if (!isLoaded || !user) return;
@@ -285,33 +276,40 @@ export function useTimerPersistence(
 
   const toggle = useCallback(() => {
     const now = Date.now();
-    let newState: TimerState;
     
-    if (timerState.isRunning) {
-      const elapsed = calculateElapsedSeconds(timerState);
-      newState = {
-        ...timerState,
-        isRunning: false,
-        startedAt: null,
-        pausedAt: now,
-        accumulatedSeconds: elapsed,
-        lastUpdated: now,
-      };
-    } else {
-      newState = {
-        ...timerState,
-        isRunning: true,
-        startedAt: now,
-        pausedAt: null,
-        lastUpdated: now,
-      };
-    }
-    
-    setTimerState(newState);
-    saveTimerState(newState);
-    syncToSupabase(newState);
-    syncLiveSession(newState);
-  }, [timerState, calculateElapsedSeconds, syncToSupabase, syncLiveSession]);
+    setTimerState(prev => {
+      let newState: TimerState;
+      
+      if (prev.isRunning) {
+        const elapsed = prev.accumulatedSeconds + (prev.startedAt ? Math.floor((now - prev.startedAt) / 1000) : 0);
+        newState = {
+          ...prev,
+          isRunning: false,
+          startedAt: null,
+          pausedAt: now,
+          accumulatedSeconds: elapsed,
+          lastUpdated: now,
+        };
+      } else {
+        newState = {
+          ...prev,
+          isRunning: true,
+          startedAt: now,
+          pausedAt: null,
+          lastUpdated: now,
+        };
+        
+        const remaining = Math.max(0, prev.totalDurationSeconds - prev.accumulatedSeconds);
+        setTimeLeft(remaining);
+      }
+      
+      saveTimerState(newState);
+      syncToSupabase(newState);
+      syncLiveSession(newState);
+      
+      return newState;
+    });
+  }, [syncToSupabase, syncLiveSession]);
 
   const reset = useCallback(() => {
     const newState: TimerState = {

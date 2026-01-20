@@ -14,17 +14,11 @@ import { LiveSession } from '@/hooks/useTimerPersistence';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { AuthProvider } from '@/lib/contexts/AuthContext';
 import { downloadCSV } from '@/lib/utils/storage';
+import { safeStorage } from '@/lib/utils/safeStorage';
+import { STORAGE_KEYS } from '@/lib/utils/storage.constants';
 import { format } from 'date-fns';
 
 type Section = 'flows' | 'visoes';
-
-const SECTION_STORAGE_KEY = 'blindy_active_section_v1';
-const SIDEBAR_STORAGE_KEY = 'blindy_sidebar_collapsed_v1';
-
-function safeStorage() {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage; } catch { return null; }
-}
 
 function MainApp() {
   const {
@@ -44,20 +38,13 @@ function MainApp() {
   useAutoFix();
 
   const [activeSection, setActiveSection] = useState<Section>(() => {
-    const storage = safeStorage();
-    if (storage) {
-      const saved = storage.getItem(SECTION_STORAGE_KEY);
-      if (saved === 'flows' || saved === 'visoes') return saved;
-    }
+    const saved = safeStorage.getString(STORAGE_KEYS.ACTIVE_SECTION);
+    if (saved === 'flows' || saved === 'visoes') return saved;
     return 'flows';
   });
   
   const [collapsed, setCollapsed] = useState(() => {
-    const storage = safeStorage();
-    if (storage) {
-      return storage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
-    }
-    return false;
+    return safeStorage.getString(STORAGE_KEYS.SIDEBAR_COLLAPSED) === 'true';
   });
   
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
@@ -78,17 +65,11 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    const storage = safeStorage();
-    if (storage) {
-      storage.setItem(SECTION_STORAGE_KEY, activeSection);
-    }
+    safeStorage.setString(STORAGE_KEYS.ACTIVE_SECTION, activeSection);
   }, [activeSection]);
 
   useEffect(() => {
-    const storage = safeStorage();
-    if (storage) {
-      storage.setItem(SIDEBAR_STORAGE_KEY, String(collapsed));
-    }
+    safeStorage.setString(STORAGE_KEYS.SIDEBAR_COLLAPSED, String(collapsed));
   }, [collapsed]);
 
   const handleSectionChange = useCallback((section: Section) => {

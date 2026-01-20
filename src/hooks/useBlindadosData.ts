@@ -6,36 +6,26 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { KanbanService } from '@/lib/services/kanbanService';
 import { PomodoroService } from '@/lib/services/pomodoroService';
-
-const CACHE_KEY = 'blindy_data_v7';
+import { safeStorage } from '@/lib/utils/safeStorage';
+import { STORAGE_KEYS } from '@/lib/utils/storage.constants';
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
 function getCache(): BlindadosData | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw) as BlindadosData;
-    if (!data.kanban?.columns) return null;
-    const hasValidColumns = data.kanban.columns.every(col => isValidUUID(col.id));
-    if (!hasValidColumns) {
-      localStorage.removeItem(CACHE_KEY);
-      return null;
-    }
-    return data;
-  } catch {
+  const data = safeStorage.get<BlindadosData>(STORAGE_KEYS.DATA_CACHE);
+  if (!data?.kanban?.columns) return null;
+  const hasValidColumns = data.kanban.columns.every(col => isValidUUID(col.id));
+  if (!hasValidColumns) {
+    safeStorage.remove(STORAGE_KEYS.DATA_CACHE);
     return null;
   }
+  return data;
 }
 
 function setCache(data: BlindadosData) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-  } catch {}
+  safeStorage.set(STORAGE_KEYS.DATA_CACHE, data);
 }
 
 export function useBlindadosData() {

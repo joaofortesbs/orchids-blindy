@@ -14,24 +14,15 @@ import {
 } from '@/lib/types/visoes';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/contexts/AuthContext';
-
-const CACHE_KEY = 'blindy_visoes_v9';
+import { safeStorage } from '@/lib/utils/safeStorage';
+import { STORAGE_KEYS } from '@/lib/utils/storage.constants';
 
 function getCache(): VisoesData | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  return safeStorage.get<VisoesData>(STORAGE_KEYS.VISOES_CACHE);
 }
 
 function setCache(data: VisoesData) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-  } catch {}
+  safeStorage.set(STORAGE_KEYS.VISOES_CACHE, data);
 }
 
 export function useVisoesData() {
@@ -39,7 +30,7 @@ export function useVisoesData() {
     const cached = getCache();
     return cached || DEFAULT_VISOES_DATA;
   });
-  const [isLoaded, setIsLoaded] = useState(() => getCache() !== null);
+  const [isLoaded, setIsLoaded] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const { user } = useAuth();
 
@@ -52,6 +43,16 @@ export function useVisoesData() {
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    const cached = getCache();
+    if (cached) {
+      setData(cached);
+      setIsLoaded(true);
+    } else if (!user) {
+      setIsLoaded(true);
+    }
+  }, [user]);
 
   const loadData = useCallback(async () => {
     if (!user || loadingRef.current) return;
@@ -157,20 +158,10 @@ export function useVisoesData() {
   }, [user, supabase]);
 
   useEffect(() => {
-    if (!isLoaded) {
-      const cached = getCache();
-      if (cached) {
-        setData(cached);
-        setIsLoaded(true);
-      }
-    }
-    
     if (user && !initialLoadDoneRef.current) {
       loadData();
-    } else if (!user) {
-      setIsLoaded(true);
     }
-  }, [user, loadData, isLoaded]);
+  }, [user, loadData]);
 
   const addVisionImage = useCallback(async (imageUrl: string) => {
     if (!user) return;

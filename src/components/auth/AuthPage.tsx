@@ -2,15 +2,17 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mail, Lock, User, Sparkles, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Mail, Lock, User, Sparkles, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
 interface AuthPageProps {
   onAuthSuccess: () => void;
 }
 
+type AuthMode = 'login' | 'signup' | 'forgot-password';
+
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -20,7 +22,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, resetPassword } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +31,19 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
     setIsLoading(true);
 
     try {
-      if (isLogin) {
+      if (mode === 'forgot-password') {
+        if (!email.trim()) {
+          setError('Por favor, insira seu e-mail');
+          setIsLoading(false);
+          return;
+        }
+        const { error } = await resetPassword(email);
+        if (error) {
+          setError('Erro ao enviar e-mail. Verifique se o e-mail está correto.');
+        } else {
+          setSuccess('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
+        }
+      } else if (mode === 'login') {
         const { error } = await signIn(email, password);
         if (error) {
           if (error.message.includes('Invalid login credentials')) {
@@ -67,7 +81,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         } else {
           setSuccess('Conta criada com sucesso! Você já pode fazer login.');
           setTimeout(() => {
-            setIsLogin(true);
+            setMode('login');
             setSuccess(null);
           }, 2000);
         }
@@ -79,14 +93,16 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
     }
   };
 
-  const switchMode = () => {
-    setIsLogin(!isLogin);
+  const switchMode = (newMode: AuthMode) => {
+    setMode(newMode);
     setError(null);
     setSuccess(null);
-    setEmail('');
-    setPassword('');
-    setFullName('');
-    setNickname('');
+    if (newMode !== 'forgot-password') {
+      setEmail('');
+      setPassword('');
+      setFullName('');
+      setNickname('');
+    }
   };
 
   return (
@@ -131,19 +147,19 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
               </div>
             </motion.div>
 
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.3 }}
-              className="relative text-center"
-            >
-              <h1 className="text-2xl font-bold text-white mb-1">
-                {isLogin ? 'Bem-vindo de volta' : 'Crie sua conta'}
-              </h1>
-              <p className="text-white/50 text-sm">
-                {isLogin ? 'Entre para continuar sua jornada' : 'Comece sua jornada de produtividade'}
-              </p>
-            </motion.div>
+<motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+                className="relative text-center"
+              >
+                <h1 className="text-2xl font-bold text-white mb-1">
+                  {mode === 'login' ? 'Bem-vindo de volta' : mode === 'signup' ? 'Crie sua conta' : 'Recuperar senha'}
+                </h1>
+                <p className="text-white/50 text-sm">
+                  {mode === 'login' ? 'Entre para continuar sua jornada' : mode === 'signup' ? 'Comece sua jornada de produtividade' : 'Enviaremos um link para redefinir sua senha'}
+                </p>
+              </motion.div>
           </div>
 
           <form onSubmit={handleSubmit} className="p-8 space-y-5">
@@ -173,135 +189,162 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
               )}
             </AnimatePresence>
 
-            <AnimatePresence mode="wait">
-              {!isLogin && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-4"
-                >
-                  <div className="space-y-2">
-                    <label className="text-sm text-white/60 font-medium">Nome completo</label>
-                    <div className="relative">
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
-                      <input
-                        type="text"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        placeholder="Seu nome completo"
-                        className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
-                      />
+<AnimatePresence mode="wait">
+                {mode === 'signup' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <label className="text-sm text-white/60 font-medium">Nome completo</label>
+                      <div className="relative">
+                        <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                        <input
+                          type="text"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="Seu nome completo"
+                          className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
+                        />
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="space-y-2">
-                    <label className="text-sm text-white/60 font-medium">Apelido</label>
-                    <div className="relative">
-                      <Sparkles className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
-                      <input
-                        type="text"
-                        value={nickname}
-                        onChange={(e) => setNickname(e.target.value)}
-                        placeholder="Como quer ser chamado?"
-                        className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
-                      />
+                    <div className="space-y-2">
+                      <label className="text-sm text-white/60 font-medium">Apelido</label>
+                      <div className="relative">
+                        <Sparkles className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                        <input
+                          type="text"
+                          value={nickname}
+                          onChange={(e) => setNickname(e.target.value)}
+                          placeholder="Como quer ser chamado?"
+                          className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
+                        />
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-            <div className="space-y-2">
-              <label className="text-sm text-white/60 font-medium">E-mail</label>
-              <div className="relative">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="seu@email.com"
-                  required
-                  className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
-                />
+              <div className="space-y-2">
+                <label className="text-sm text-white/60 font-medium">E-mail</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="seu@email.com"
+                    required
+                    className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
+                  />
+                </div>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-sm text-white/60 font-medium">Senha</label>
-              <div className="relative">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  minLength={6}
-                  className="w-full pl-12 pr-12 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
+              {mode !== 'forgot-password' && (
+                <div className="space-y-2">
+                  <label className="text-sm text-white/60 font-medium">Senha</label>
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      minLength={6}
+                      className="w-full pl-12 pr-12 py-3.5 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 focus:bg-white/10 outline-none text-white placeholder:text-white/30 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
+                  {mode === 'signup' && (
+                    <p className="text-xs text-white/40 mt-1">Mínimo de 6 caracteres</p>
+                  )}
+                </div>
+              )}
+
+              {mode === 'login' && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => switchMode('forgot-password')}
+                    className="text-sm text-[#00f6ff]/70 hover:text-[#00f6ff] transition-colors"
+                  >
+                    Esqueceu sua senha?
+                  </button>
+                </div>
+              )}
+
+              <motion.button
+                type="submit"
+                disabled={isLoading}
+                whileHover={{ scale: isLoading ? 1 : 1.02 }}
+                whileTap={{ scale: isLoading ? 1 : 0.98 }}
+                className="relative w-full py-4 rounded-xl font-semibold text-[#010516] overflow-hidden disabled:opacity-70 disabled:cursor-not-allowed group"
+                style={{
+                  background: 'linear-gradient(135deg, #00f6ff 0%, #00d4ff 50%, #7c3aed 100%)',
+                }}
+              >
+                <span className="relative z-10 flex items-center justify-center gap-2">
+                  {isLoading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-[#010516]/30 border-t-[#010516] rounded-full animate-spin" />
+                      Aguarde...
+                    </>
+                  ) : (
+                    mode === 'login' ? 'Entrar' : mode === 'signup' ? 'Criar conta' : 'Enviar link'
+                  )}
+                </span>
+                
+                <div 
+                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{
+                    background: 'linear-gradient(135deg, #00d4ff 0%, #00f6ff 50%, #a855f7 100%)',
+                  }}
                 />
+              </motion.button>
+
+              {mode === 'forgot-password' ? (
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                  onClick={() => switchMode('login')}
+                  className="flex items-center justify-center gap-2 w-full text-white/50 hover:text-white/70 text-sm transition-colors"
                 >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  <ArrowLeft className="w-4 h-4" />
+                  Voltar para o login
                 </button>
-              </div>
-              {!isLogin && (
-                <p className="text-xs text-white/40 mt-1">Mínimo de 6 caracteres</p>
+              ) : (
+                <>
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-white/10"></div>
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                      <span className="px-4 bg-[#0a0f1f] text-white/40">ou</span>
+                    </div>
+                  </div>
+
+                  <p className="text-center text-white/50 text-sm">
+                    {mode === 'login' ? 'Não tem uma conta?' : 'Já tem uma conta?'}
+                    <button
+                      type="button"
+                      onClick={() => switchMode(mode === 'login' ? 'signup' : 'login')}
+                      className="ml-2 text-[#00f6ff] hover:text-[#00d4ff] font-medium transition-colors"
+                    >
+                      {mode === 'login' ? 'Cadastre-se' : 'Faça login'}
+                    </button>
+                  </p>
+                </>
               )}
-            </div>
-
-            <motion.button
-              type="submit"
-              disabled={isLoading}
-              whileHover={{ scale: isLoading ? 1 : 1.02 }}
-              whileTap={{ scale: isLoading ? 1 : 0.98 }}
-              className="relative w-full py-4 rounded-xl font-semibold text-[#010516] overflow-hidden disabled:opacity-70 disabled:cursor-not-allowed group"
-              style={{
-                background: 'linear-gradient(135deg, #00f6ff 0%, #00d4ff 50%, #7c3aed 100%)',
-              }}
-            >
-              <span className="relative z-10 flex items-center justify-center gap-2">
-                {isLoading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-[#010516]/30 border-t-[#010516] rounded-full animate-spin" />
-                    Aguarde...
-                  </>
-                ) : (
-                  isLogin ? 'Entrar' : 'Criar conta'
-                )}
-              </span>
-              
-              <div 
-                className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{
-                  background: 'linear-gradient(135deg, #00d4ff 0%, #00f6ff 50%, #a855f7 100%)',
-                }}
-              />
-            </motion.button>
-
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-white/10"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-4 bg-[#0a0f1f] text-white/40">ou</span>
-              </div>
-            </div>
-
-            <p className="text-center text-white/50 text-sm">
-              {isLogin ? 'Não tem uma conta?' : 'Já tem uma conta?'}
-              <button
-                type="button"
-                onClick={switchMode}
-                className="ml-2 text-[#00f6ff] hover:text-[#00d4ff] font-medium transition-colors"
-              >
-                {isLogin ? 'Cadastre-se' : 'Faça login'}
-              </button>
-            </p>
           </form>
         </div>
 

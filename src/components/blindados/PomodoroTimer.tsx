@@ -5,21 +5,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Pause, RotateCcw, Settings, ChevronDown, Plus, X, Volume2, VolumeX } from 'lucide-react';
 import { PomodoroSettings, PomodoroCategory, DEFAULT_POMODORO_SETTINGS } from '@/lib/types/blindados';
 import { useTimerPersistence, LiveSession } from '@/hooks/useTimerPersistence';
+import { safeStorage } from '@/lib/utils/safeStorage';
+import { STORAGE_KEYS } from '@/lib/utils/storage.constants';
 
 interface PomodoroTimerProps {
   settings: PomodoroSettings;
   onSettingsChange: (settings: PomodoroSettings) => void;
   onSessionComplete: (categoryId: string, duration: number) => void;
   onLiveSessionUpdate?: (session: LiveSession | null) => void;
-}
-
-const CATEGORY_STORAGE_KEY = 'blindy_selected_category_v1';
-const DURATIONS_STORAGE_KEY = 'blindy_category_durations_v1';
-const SOUND_STORAGE_KEY = 'blindy_sound_enabled_v1';
-
-function safeStorage() {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage; } catch { return null; }
 }
 
 export function PomodoroTimer({ 
@@ -29,9 +22,8 @@ export function PomodoroTimer({
   onLiveSessionUpdate 
 }: PomodoroTimerProps) {
   const [selectedCategory, setSelectedCategory] = useState<PomodoroCategory>(() => {
-    const storage = safeStorage();
-    if (storage && settings.categories.length > 0) {
-      const savedId = storage.getItem(CATEGORY_STORAGE_KEY);
+    if (settings.categories.length > 0) {
+      const savedId = safeStorage.getString(STORAGE_KEYS.SELECTED_CATEGORY);
       const found = settings.categories.find(c => c.id === savedId);
       if (found) return found;
     }
@@ -39,13 +31,8 @@ export function PomodoroTimer({
   });
   
   const [categoryDurations, setCategoryDurations] = useState<Record<string, number>>(() => {
-    const storage = safeStorage();
-    if (storage) {
-      try {
-        const saved = storage.getItem(DURATIONS_STORAGE_KEY);
-        if (saved) return JSON.parse(saved);
-      } catch {}
-    }
+    const saved = safeStorage.get<Record<string, number>>(STORAGE_KEYS.CATEGORY_DURATIONS);
+    if (saved) return saved;
     const durations: Record<string, number> = {};
     settings.categories.forEach((cat) => {
       durations[cat.id] = cat.duration || 25;
@@ -56,12 +43,8 @@ export function PomodoroTimer({
   const [showSettings, setShowSettings] = useState(false);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(() => {
-    const storage = safeStorage();
-    if (storage) {
-      const saved = storage.getItem(SOUND_STORAGE_KEY);
-      return saved !== 'false';
-    }
-    return true;
+    const saved = safeStorage.getString(STORAGE_KEYS.SOUND_ENABLED);
+    return saved !== 'false';
   });
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -73,24 +56,15 @@ export function PomodoroTimer({
   }, []);
 
   useEffect(() => {
-    const storage = safeStorage();
-    if (storage) {
-      storage.setItem(CATEGORY_STORAGE_KEY, selectedCategory.id);
-    }
+    safeStorage.setString(STORAGE_KEYS.SELECTED_CATEGORY, selectedCategory.id);
   }, [selectedCategory.id]);
 
   useEffect(() => {
-    const storage = safeStorage();
-    if (storage) {
-      storage.setItem(DURATIONS_STORAGE_KEY, JSON.stringify(categoryDurations));
-    }
+    safeStorage.set(STORAGE_KEYS.CATEGORY_DURATIONS, categoryDurations);
   }, [categoryDurations]);
 
   useEffect(() => {
-    const storage = safeStorage();
-    if (storage) {
-      storage.setItem(SOUND_STORAGE_KEY, String(soundEnabled));
-    }
+    safeStorage.setString(STORAGE_KEYS.SOUND_ENABLED, String(soundEnabled));
   }, [soundEnabled]);
 
   useEffect(() => {
