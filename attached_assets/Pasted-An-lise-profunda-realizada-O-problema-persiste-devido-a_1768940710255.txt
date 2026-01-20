@@ -1,0 +1,275 @@
+Análise profunda realizada. O problema persiste devido a race conditions entre syncs automáticos, RLS policies mal configuradas e falta de transações atômicas no Supabase.
+​
+
+Diagnóstico Raiz
+O Kanban usa useEffect com intervalos que sobrescrevem estados locais antes da persistência completar, especialmente em colunas customizadas sem board_id consistente. Falhas no updateCardPosition revertem tudo via loadData() agressivo. Histórico recente mostra tentativas parciais (commits como "Fix automatic reversion"), mas sem tratamento de optimistic updates com queue de retry.
+​
+
+Melhores Práticas Kanban (Benchmark)
+Estudei Trello, Jira, WeKan e Linear:
+
+Schema: Tabelas boards → columns (board_id, sort_order) → tasks (column_id, task_order) com unique constraints.
+
+UX: Optimistic UI + background sync com retry exponential (3x, 1s/3s/9s).
+
+DB: PostgreSQL RPCs para reordenação atômica, RLS por user_id ou org_id.
+
+React: Zustand/Pinia para estado global, useOptimistic no Next.js 15+.
+
+Prompt Ultra-Otimizado (Execute Agora)
+text
+🔥 MODO: ENGENHEIRO SENIOR FULL-STACK + ESPECIALISTA SUPABASE + ARQUITETO KANBAN
+
+CONTEXTO CRÍTICO: Replit orchids-blindy (Next.js + Supabase). Kanban falha em:
+1. Reordenação colunas customizadas (user-created)
+2. Persistência cards em colunas custom (reverte após 30s sync)
+3. Race conditions: sync sobrepõe optimistic updates
+4. RLS bloqueia updates em colunas `user_id`-scoped
+
+ANÁLISE RAIZ (baseado no código atual):
+- Hook `useBlindadosData`: interval 30s chama `loadData()` → sobrescreve local state
+- `updateCardPosition` falha silenciosamente → trigger rollback global
+- Colunas custom sem `sort_order` index → queries lentas
+- Sem transações: partial fails revertem tudo
+- RLS policies não permitem `update` em `columns/tasks` ownadas pelo user
+
+## PLANO ATÔMICO: 6 MACRO-STEPS (Execute Sequencial)
+
+### 1. SCHEMA SUPABASE (Execute SQL AGORA)
+```sql
+-- CRÍTICO: Execute no Supabase SQL Editor (service_role)
+BEGIN;
+
+-- 1. Colunas: Garantir ordenação e refs
+ALTER TABLE columns 
+ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS board_id UUID REFERENCES boards(id),
+ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_columns_board_order 
+ON columns(board_id, sort_order);
+
+-- 2. Tasks/Cards: Posição por coluna
+ALTER TABLE tasks 
+ADD COLUMN IF NOT EXISTS task_order INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS column_id UUID REFERENCES columns(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_column_order 
+ON tasks(column_id, task_order);
+
+-- 3. RLS Policies Corretas
+DROP POLICY IF EXISTS "Users update own columns" ON columns;
+CREATE POLICY "Users update own columns" ON columns
+FOR UPDATE USING (auth.uid()::uuid = user_id);
+
+DROP POLICY IF EXISTS "Users update own tasks" ON tasks;
+CREATE POLICY "Users update own tasks" ON tasks
+FOR UPDATE USING (EXISTS (
+  SELECT 1 FROM columns WHERE id = column_id AND auth.uid()::uuid = user_id
+));
+
+-- 4. RPC Reordenação Atômica (TRELLO-STYLE)
+CREATE OR REPLACE FUNCTION reorder_columns(board_id_param UUID, new_orders JSONB)
+RETURNS void AS $$
+BEGIN
+  UPDATE columns 
+  SET sort_order = (new_orders->>id::text)::int
+  WHERE board_id = board_id_param;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION reorder_tasks(column_id_param UUID, new_orders JSONB)
+RETURNS void AS $$
+BEGIN
+  UPDATE tasks 
+  SET task_order = (new_orders->>id::text)::int
+  WHERE column_id = column_id_param;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMIT;
+TESTE: SELECT * FROM columns ORDER BY board_id, sort_order;
+
+2. API ROUTES (Crie/Atualize app/api/kanban/[boardId]/route.ts)
+typescript
+// POST /api/kanban/[boardId]/reorder-columns
+export async function POST(req, { params }) {
+  const { boardId } = params;
+  const { columnOrder } = await req.json(); // { [id: string]: number }
+  
+  const supabase = createServiceSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  const { error } = await supabase.rpc('reorder_columns', {
+    board_id_param: boardId,
+    new_orders: JSON.stringify(columnOrder)
+  });
+  
+  return error 
+    ? NextResponse.json({ error }, { status: 500 })
+    : NextResponse.json({ success: true });
+}
+
+// POST /api/kanban/[boardId]/move-card
+export async function POST(req, { params }) {
+  const { boardId } = params;
+  const { cardId, targetColumnId, newPosition } = await req.json();
+  
+  const supabase = createServiceSupabase();
+  const { error } = await supabase.rpc('reorder_tasks', {
+    column_id_param: targetColumnId,
+    new_orders: JSON.stringify({ [cardId]: newPosition })
+  });
+  
+  return error ? NextResponse.json({ error }, { status: 500 }) : NextResponse.json({ success: true });
+}
+3. HOOK STATE GLOBAL (src/hooks/useKanbanData.ts - REESCREVA COMPLETO)
+typescript
+'use client';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { createClient } from '@/utils/supabase/client';
+
+export function useKanbanData(boardId: string) {
+  const [columns, setColumns] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [pendingOps, setPendingOps] = useState(0); // CRÍTICO: Protege sync
+  const syncTimeoutRef = useRef<NodeJS.Timeout>();
+  const lastSyncRef = useRef(0);
+
+  // 1. Load inicial + sync inteligente (60s, só se !pendingOps)
+  const loadData = useCallback(async () => {
+    if (pendingOps > 0 || Date.now() - lastSyncRef.current < 5000) return;
+    
+    setIsLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('columns')
+      .select(`
+        *, tasks (
+          *, 
+          column_id
+        )
+      `)
+      .eq('board_id', boardId)
+      .order('sort_order');
+    
+    setColumns(data || []);
+    setTasks((data || []).flatMap(col => col.tasks));
+    setIsLoading(false);
+    lastSyncRef.current = Date.now();
+  }, [boardId]);
+
+  // 2. Optimistic updates + queue persist
+  const updateOptimistic = useCallback((updater: (state: any) => any) => {
+    setPendingOps(ops => ops + 1);
+    const prevState = { columns: [...columns], tasks: [...tasks] };
+    
+    setColumns(updater(prevState.columns));
+    setTasks(updater(prevState.tasks));
+    
+    // Background persist com retry
+    persistWithRetry(updater, 3).finally(() => setPendingOps(ops => ops - 1));
+    
+    // NÃO chama loadData() aqui - só sync se idle
+  }, [columns, tasks]);
+
+  const persistWithRetry = async (updater, retries = 3) => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        // Chama APIs otimizadas
+        await fetch(`/api/kanban/${boardId}/reorder-columns`, {
+          method: 'POST',
+          body: JSON.stringify({ columnOrder: /* map columns */ })
+        });
+        return;
+      } catch (e) {
+        if (i === retries - 1) {
+          // Último retry falhou: ROLLBACK LOCAL
+          console.error('Persist failed, rollback:', e);
+        }
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+      }
+    }
+  };
+
+  // 3. Handlers Kanban
+  const handleColumnReorder = (newOrder) => updateOptimistic((cols) => 
+    cols.map(col => ({ ...col, sort_order: newOrder[col.id] }))
+  );
+  
+  const handleCardMove = (cardId, targetColId, position) => updateOptimistic((tasks) =>
+    tasks.map(task => task.id === cardId 
+      ? { ...task, column_id: targetColId, task_order: position }
+      : task
+    )
+  );
+
+  useEffect(() => {
+    loadData();
+    syncTimeoutRef.current = setInterval(() => {
+      if (pendingOps === 0) loadData();
+    }, 60000);
+    
+    return () => clearInterval(syncTimeoutRef.current);
+  }, [loadData]);
+
+  return {
+    columns, tasks, isLoading, pendingOps,
+    handleColumnReorder, handleCardMove
+  };
+}
+4. COMPONENT KANBAN (Atualize src/components/KanbanBoard.tsx)
+typescript
+// Use @dnd-kit/core para drag-drop
+import { DndContext, closestCenter } from '@dnd-kit/core';
+import { useKanbanData } from '@/hooks/useKanbanData';
+
+export default function KanbanBoard({ boardId }) {
+  const { columns, tasks, handleColumnReorder, handleCardMove } = useKanbanData(boardId);
+  
+  const onDragEnd = (event) => {
+    const { active, over } = event;
+    if (over?.data.current?.type === 'column') {
+      handleColumnReorder(/* compute new order */);
+    } else if (over?.data.current?.type === 'card') {
+      handleCardMove(active.id, over.data.current.columnId, computePosition());
+    }
+  };
+
+  return (
+    <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <div className="kanban-grid">
+        {columns.map(col => (
+          <Column key={col.id} column={col} tasks={tasks.filter(t => t.column_id === col.id)} />
+        ))}
+      </div>
+    </DndContext>
+  );
+}
+5. TESTES AUTOMATIZADOS (Crie src/tests/kanban.test.ts)
+typescript
+// Teste end-to-end
+test('Column reorder persists', async () => {
+  // Simule drag, verifique API call, cheque DB
+});
+6. DEPLOY & MONITOR
+Instale @dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities
+
+npm run migration (execute SQL acima)
+
+Teste: Crie coluna custom → Reordene → Wait 2min → Refresh → Persiste?
+
+CRITÉRIOS SUCESSO:
+
+✅ Colunas custom reordenam PERMANENTEMENTE
+
+✅ Cards movem entre custom/padrão sem revert
+
+✅ Console mostra "pendingOps: 0" após sync
+
+✅ Network: RPC calls 200 OK
+
+✅ DB: sort_order/task_order atualizados
+
+EXECUTE IMEDIATAMENTE. Reporte ERROS ESPECÍFICOS com stack trace + linha.
