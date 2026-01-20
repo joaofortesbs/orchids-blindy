@@ -304,6 +304,8 @@ const tabs: { id: TeamsSectionTab; label: string; icon: React.ComponentType<{ cl
   { id: 'metas', label: 'Metas', icon: Target }
 ];
 
+type MemberFilter = 'all' | 'in-flow' | 'online' | 'offline';
+
 export function TeamsSection() {
   const [activeTab, setActiveTab] = useState<TeamsSectionTab>('visao-geral');
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -317,6 +319,8 @@ export function TeamsSection() {
   const [newTeamDescription, setNewTeamDescription] = useState('');
   const [newTeamIcon, setNewTeamIcon] = useState('💻');
   const [newTeamColor, setNewTeamColor] = useState('#00f6ff');
+  const [memberFilter, setMemberFilter] = useState<MemberFilter>('all');
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
 
   const handleCreateTeam = () => {
     if (!newTeamName.trim()) return;
@@ -422,6 +426,22 @@ export function TeamsSection() {
     }
   };
 
+  const getFilteredMembers = () => {
+    switch (memberFilter) {
+      case 'in-flow': return mockMembers.filter(m => m.isInFlow);
+      case 'online': return mockMembers.filter(m => m.status === 'online');
+      case 'offline': return mockMembers.filter(m => m.status === 'offline');
+      default: return mockMembers;
+    }
+  };
+
+  const memberFilters: { id: MemberFilter; label: string; count: number }[] = [
+    { id: 'all', label: 'Todos', count: mockMembers.length },
+    { id: 'in-flow', label: 'Em Flow', count: mockMembers.filter(m => m.isInFlow).length },
+    { id: 'online', label: 'Online', count: mockMembers.filter(m => m.status === 'online').length },
+    { id: 'offline', label: 'Offline', count: mockMembers.filter(m => m.status === 'offline').length }
+  ];
+
   const renderOverview = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -495,13 +515,29 @@ export function TeamsSection() {
           animate={{ opacity: 1, x: 0 }}
           className="lg:col-span-2 bg-[#0a0f1f] rounded-2xl p-6 border border-white/10"
         >
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold text-white">Membros em Flow</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">Membros</h3>
             <span className="text-xs text-white/40">Atualizando em tempo real</span>
           </div>
-          <div className="space-y-4">
-            {mockMembers.filter(m => m.isInFlow).map(member => (
-              <div key={member.id} className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-[#00f6ff]/20">
+          <div className="flex gap-2 mb-4">
+            {memberFilters.map((filter) => (
+              <button
+                key={filter.id}
+                onClick={() => setMemberFilter(filter.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
+                  memberFilter === filter.id
+                    ? 'bg-[#00f6ff]/20 text-[#00f6ff] border border-[#00f6ff]/30'
+                    : 'bg-white/5 text-white/60 border border-transparent hover:text-white hover:bg-white/10'
+                }`}
+              >
+                {filter.label}
+                <span className="ml-1.5 text-xs opacity-60">({filter.count})</span>
+              </button>
+            ))}
+          </div>
+          <div className="space-y-3 max-h-[300px] overflow-y-auto">
+            {getFilteredMembers().map(member => (
+              <div key={member.id} className={`flex items-center gap-4 p-4 rounded-xl bg-white/5 ${member.isInFlow ? 'border border-[#00f6ff]/20' : 'border border-transparent'}`}>
                 <div className="relative">
                   <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00f6ff] to-[#7c3aed] flex items-center justify-center text-[#010516] font-bold">
                     {member.avatar}
@@ -510,23 +546,33 @@ export function TeamsSection() {
                 </div>
                 <div className="flex-1">
                   <p className="text-white font-medium">{member.name}</p>
-                  <p className="text-[#00f6ff] text-sm flex items-center gap-2">
-                    <Play className="w-3 h-3" />
-                    {member.currentFlow}
-                  </p>
+                  {member.isInFlow ? (
+                    <p className="text-[#00f6ff] text-sm flex items-center gap-2">
+                      <Play className="w-3 h-3" />
+                      {member.currentFlow}
+                    </p>
+                  ) : (
+                    <p className="text-white/40 text-sm">{member.email}</p>
+                  )}
                 </div>
                 <div className="text-right">
-                  <div className="flex items-center gap-1 text-[#00f6ff]">
-                    <Activity className="w-4 h-4" />
-                    <span className="text-sm font-medium">Em foco</span>
-                  </div>
+                  {member.isInFlow ? (
+                    <div className="flex items-center gap-1 text-[#00f6ff]">
+                      <Activity className="w-4 h-4" />
+                      <span className="text-sm font-medium">Em foco</span>
+                    </div>
+                  ) : (
+                    <span className={`text-sm capitalize ${member.status === 'online' ? 'text-green-400' : member.status === 'offline' ? 'text-gray-400' : 'text-yellow-400'}`}>
+                      {member.status}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
-            {mockMembers.filter(m => m.isInFlow).length === 0 && (
+            {getFilteredMembers().length === 0 && (
               <div className="text-center py-8 text-white/40">
-                <Pause className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>Nenhum membro em flow no momento</p>
+                <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p>Nenhum membro encontrado</p>
               </div>
             )}
           </div>
@@ -575,6 +621,54 @@ export function TeamsSection() {
           </div>
         </motion.div>
       </div>
+
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-[#0a0f1f] rounded-2xl p-6 border border-white/10"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-semibold text-white">Suas Equipes</h3>
+          <button 
+            onClick={() => setActiveTab('equipes')}
+            className="text-xs text-[#00f6ff] hover:underline"
+          >
+            Ver todas
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {teams.slice(0, 4).map((team) => (
+            <div 
+              key={team.id}
+              onClick={() => setSelectedTeam(team)}
+              className="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer group"
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div 
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-lg"
+                  style={{ backgroundColor: `${team.color}20`, border: `1px solid ${team.color}40` }}
+                >
+                  {team.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-medium truncate">{team.name}</p>
+                  <p className="text-white/40 text-xs">{team.members.length} membros</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-white/40">
+                <span className="flex items-center gap-1">
+                  <Target className="w-3 h-3" />
+                  {team.tasksCompleted}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Zap className="w-3 h-3" />
+                  {team.activeFlows} em flow
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
     </div>
   );
 
@@ -853,6 +947,7 @@ export function TeamsSection() {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: index * 0.1 }}
+            onClick={() => setSelectedTeam(team)}
             className="bg-[#0a0f1f] rounded-2xl p-6 border border-white/10 hover:border-white/20 transition-all cursor-pointer group"
           >
             <div className="flex items-start justify-between mb-4">
@@ -1155,7 +1250,167 @@ export function TeamsSection() {
     </div>
   );
 
+  const renderTeamDetail = (team: Team) => (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-6">
+        <button
+          onClick={() => setSelectedTeam(null)}
+          className="p-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+        >
+          <ChevronLeft className="w-5 h-5 text-white" />
+        </button>
+        <div 
+          className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl"
+          style={{ backgroundColor: `${team.color}20`, border: `1px solid ${team.color}40` }}
+        >
+          {team.icon}
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-white">{team.name}</h2>
+          <p className="text-white/40 text-sm">{team.description}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-gradient-to-br from-[#00f6ff]/10 to-[#00f6ff]/5 rounded-2xl p-5 border border-[#00f6ff]/20">
+          <div className="flex items-center justify-between">
+            <div className="p-2 rounded-xl bg-[#00f6ff]/20">
+              <Users className="w-5 h-5 text-[#00f6ff]" />
+            </div>
+            <span className="text-xl font-bold text-white">{team.members.length}</span>
+          </div>
+          <p className="text-white/60 text-sm mt-2">Membros</p>
+        </div>
+        <div className="bg-gradient-to-br from-[#7c3aed]/10 to-[#7c3aed]/5 rounded-2xl p-5 border border-[#7c3aed]/20">
+          <div className="flex items-center justify-between">
+            <div className="p-2 rounded-xl bg-[#7c3aed]/20">
+              <Zap className="w-5 h-5 text-[#7c3aed]" />
+            </div>
+            <span className="text-xl font-bold text-white">{team.activeFlows}</span>
+          </div>
+          <p className="text-white/60 text-sm mt-2">Em Flow</p>
+        </div>
+        <div className="bg-gradient-to-br from-green-500/10 to-green-500/5 rounded-2xl p-5 border border-green-500/20">
+          <div className="flex items-center justify-between">
+            <div className="p-2 rounded-xl bg-green-500/20">
+              <Target className="w-5 h-5 text-green-400" />
+            </div>
+            <span className="text-xl font-bold text-white">{team.tasksCompleted}</span>
+          </div>
+          <p className="text-white/60 text-sm mt-2">Tarefas</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-[#0a0f1f] rounded-2xl p-6 border border-white/10">
+          <h3 className="text-lg font-semibold text-white mb-4">Membros da Equipe</h3>
+          <div className="space-y-3">
+            {team.members.map(member => (
+              <div key={member.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/5">
+                <div className="relative">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00f6ff] to-[#7c3aed] flex items-center justify-center text-[#010516] font-bold text-sm">
+                    {member.avatar}
+                  </div>
+                  <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${getStatusColor(member.status)} border-2 border-[#0a0f1f]`} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-white font-medium text-sm">{member.name}</p>
+                  <p className="text-white/40 text-xs">{getRoleBadge(member.role).label}</p>
+                </div>
+                {member.isInFlow && (
+                  <span className="text-[#00f6ff] text-xs flex items-center gap-1">
+                    <Play className="w-3 h-3" /> Em flow
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-[#0a0f1f] rounded-2xl p-6 border border-white/10">
+          <h3 className="text-lg font-semibold text-white mb-4">Ranking da Equipe</h3>
+          <div className="space-y-3">
+            {team.members.slice(0, 5).map((member, index) => (
+              <div key={member.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/5">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
+                  index === 0 ? 'bg-yellow-500 text-black' :
+                  index === 1 ? 'bg-gray-400 text-black' :
+                  index === 2 ? 'bg-amber-700 text-white' :
+                  'bg-white/10 text-white/60'
+                }`}>
+                  {index + 1}
+                </div>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#00f6ff] to-[#7c3aed] flex items-center justify-center text-[#010516] font-bold text-xs">
+                  {member.avatar}
+                </div>
+                <div className="flex-1">
+                  <p className="text-white font-medium text-sm">{member.name}</p>
+                </div>
+                <span className="text-white/40 text-sm">{member.totalFocusTime}min</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-[#0a0f1f] rounded-2xl p-6 border border-white/10">
+        <h3 className="text-lg font-semibold text-white mb-4">Metas da Equipe</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {mockGoals.filter(g => g.type === 'team').slice(0, 4).map(goal => (
+            <div key={goal.id} className="p-4 rounded-xl bg-white/5 border border-white/10">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-white font-medium text-sm">{goal.title}</h4>
+                <span className={`px-2 py-0.5 rounded-full text-xs ${getGoalStatusColor(goal.status)}`}>
+                  {goal.status === 'on-track' ? 'No prazo' : goal.status === 'at-risk' ? 'Em risco' : goal.status === 'behind' ? 'Atrasada' : 'Concluída'}
+                </span>
+              </div>
+              <div className="h-2 bg-white/10 rounded-full overflow-hidden mb-2">
+                <div 
+                  className="h-full rounded-full bg-gradient-to-r from-[#00f6ff] to-[#7c3aed]"
+                  style={{ width: `${(goal.currentValue / goal.targetValue) * 100}%` }}
+                />
+              </div>
+              <p className="text-white/40 text-xs">{Math.round((goal.currentValue / goal.targetValue) * 100)}% concluído</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-[#0a0f1f] rounded-2xl p-6 border border-white/10">
+        <h3 className="text-lg font-semibold text-white mb-4">Feed da Equipe</h3>
+        <div className="space-y-4">
+          {posts.slice(0, 3).map(post => (
+            <div key={post.id} className="p-4 rounded-xl bg-white/5 border border-white/10">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00f6ff] to-[#7c3aed] flex items-center justify-center text-[#010516] font-bold text-sm">
+                  {post.author.avatar}
+                </div>
+                <div className="flex-1">
+                  <p className="text-white font-medium text-sm">{post.author.name}</p>
+                  <p className="text-white/60 text-sm mt-1">{post.content}</p>
+                  <div className="flex items-center gap-4 mt-3">
+                    <button className="flex items-center gap-1 text-white/40 hover:text-red-400 text-xs">
+                      <Heart className={`w-4 h-4 ${post.isLiked ? 'fill-red-500 text-red-500' : ''}`} />
+                      {post.likes}
+                    </button>
+                    <button className="flex items-center gap-1 text-white/40 hover:text-[#00f6ff] text-xs">
+                      <MessageCircle className="w-4 h-4" />
+                      {post.comments}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
   const renderContent = () => {
+    if (selectedTeam) {
+      return renderTeamDetail(selectedTeam);
+    }
     switch (activeTab) {
       case 'visao-geral': return renderOverview();
       case 'membros': return renderMembers();
@@ -1167,68 +1422,35 @@ export function TeamsSection() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-white/10 bg-[#010516]">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Equipes</h2>
-            <p className="text-white/40 text-sm">Gerencie sua equipe e acompanhe a produtividade</p>
+    <div className="flex flex-col h-full relative">
+      {!selectedTeam && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+          <div className="flex gap-2 p-1.5 bg-[#0a0f1f]/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-lg">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
+                    activeTab === tab.id
+                      ? 'bg-gradient-to-r from-[#00f6ff]/20 to-[#7c3aed]/20 text-[#00f6ff] border border-[#00f6ff]/30'
+                      : 'text-white/60 border border-transparent hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-sm font-medium whitespace-nowrap">{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
+      )}
 
-        <div className="relative flex items-center">
-          <button
-            onClick={() => scrollCarousel('left')}
-            disabled={!canScrollLeft}
-            className={`absolute left-0 z-10 p-2 rounded-full bg-[#010516] border border-white/10 transition-all ${
-              canScrollLeft ? 'text-white hover:border-[#00f6ff]/50' : 'text-white/20 cursor-not-allowed'
-            }`}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-
-          <div className="flex-1 overflow-hidden mx-10">
-            <motion.div
-              className="flex gap-2"
-              animate={{ x: -carouselIndex * 140 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            >
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all ${
-                      activeTab === tab.id
-                        ? 'bg-gradient-to-r from-[#00f6ff]/20 to-[#7c3aed]/20 text-[#00f6ff] border border-[#00f6ff]/30'
-                        : 'bg-white/5 text-white/60 border border-transparent hover:text-white hover:bg-white/10'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="text-sm font-medium whitespace-nowrap">{tab.label}</span>
-                  </button>
-                );
-              })}
-            </motion.div>
-          </div>
-
-          <button
-            onClick={() => scrollCarousel('right')}
-            disabled={!canScrollRight}
-            className={`absolute right-0 z-10 p-2 rounded-full bg-[#010516] border border-white/10 transition-all ${
-              canScrollRight ? 'text-white hover:border-[#00f6ff]/50' : 'text-white/20 cursor-not-allowed'
-            }`}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className={`flex-1 overflow-y-auto p-6 ${selectedTeam ? 'pt-6' : 'pt-20'}`}>
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeTab}
+            key={selectedTeam ? `team-${selectedTeam.id}` : activeTab}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
