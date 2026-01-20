@@ -315,50 +315,54 @@ export class KanbanService {
 
   async updateColumnPositions(columns: { id: string; title: string; position: number }[]): Promise<boolean> {
     try {
-      const promises = columns.map(col => 
-        this.supabase
-          .from('kanban_columns')
-          .update({ position: col.position, title: col.title, updated_at: new Date().toISOString() })
-          .eq('id', col.id)
-          .eq('user_id', this.userId)
-      );
+      return await withRetry(async () => {
+        const promises = columns.map(col => 
+          this.supabase
+            .from('kanban_columns')
+            .update({ position: col.position, title: col.title, updated_at: new Date().toISOString() })
+            .eq('id', col.id)
+            .eq('user_id', this.userId)
+        );
 
-      const results = await Promise.all(promises);
-      
-      for (const result of results) {
-        if (result.error) {
-          console.error('KanbanService.updateColumnPositions error:', result.error.message);
-          return false;
+        const results = await Promise.all(promises);
+        
+        for (const result of results) {
+          if (result.error) {
+            console.error('KanbanService.updateColumnPositions error:', result.error.message);
+            throw result.error;
+          }
         }
-      }
-      return true;
+        return true;
+      });
     } catch (e) {
-      console.error('KanbanService.updateColumnPositions exception:', e);
+      console.error('KanbanService.updateColumnPositions failed after retries:', e);
       return false;
     }
   }
 
   async updateCardPositions(columnId: string, cards: { id: string; position: number }[]): Promise<boolean> {
     try {
-      const promises = cards.map(card =>
-        this.supabase
-          .from('kanban_cards')
-          .update({ position: card.position, column_id: columnId, updated_at: new Date().toISOString() })
-          .eq('id', card.id)
-          .eq('user_id', this.userId)
-      );
+      return await withRetry(async () => {
+        const promises = cards.map(card =>
+          this.supabase
+            .from('kanban_cards')
+            .update({ position: card.position, column_id: columnId, updated_at: new Date().toISOString() })
+            .eq('id', card.id)
+            .eq('user_id', this.userId)
+        );
 
-      const results = await Promise.all(promises);
+        const results = await Promise.all(promises);
 
-      for (const result of results) {
-        if (result.error) {
-          console.error('KanbanService.updateCardPositions error:', result.error.message);
-          return false;
+        for (const result of results) {
+          if (result.error) {
+            console.error('KanbanService.updateCardPositions error:', result.error.message);
+            throw result.error;
+          }
         }
-      }
-      return true;
+        return true;
+      });
     } catch (e) {
-      console.error('KanbanService.updateCardPositions exception:', e);
+      console.error('KanbanService.updateCardPositions failed after retries:', e);
       return false;
     }
   }

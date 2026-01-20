@@ -455,6 +455,10 @@ export function useBlindadosData() {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) return;
     
+    // Store previous state for rollback
+    const previousColumns = dataRef.current.kanban.columns;
+    
+    // Optimistic update - instantly show new column order
     setData(prev => {
       const updated = { ...prev, kanban: { columns }, lastUpdated: new Date().toISOString() };
       setCache(updated);
@@ -462,9 +466,23 @@ export function useBlindadosData() {
     });
 
     try {
-      await kanbanService.updateColumnPositions(columns.map((c, i) => ({ id: c.id, title: c.title, position: i })));
+      const success = await kanbanService.updateColumnPositions(columns.map((c, i) => ({ id: c.id, title: c.title, position: i })));
+      if (!success) {
+        // Rollback on failure
+        setData(prev => {
+          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          setCache(updated);
+          return updated;
+        });
+      }
     } catch (e) {
       console.error('updateKanbanColumns error:', e);
+      // Rollback on error
+      setData(prev => {
+        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        setCache(updated);
+        return updated;
+      });
     }
   }, []);
 
