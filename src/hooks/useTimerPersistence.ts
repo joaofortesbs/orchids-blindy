@@ -207,6 +207,7 @@ export function useTimerPersistence(
         const remaining = Math.max(0, state.totalDurationSeconds - elapsed);
         
         setTimeLeft(remaining);
+        syncLiveSession(state);
         
         if (remaining <= 0) {
           const completedState: TimerState = {

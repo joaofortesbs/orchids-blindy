@@ -139,6 +139,13 @@ export function PomodoroTimer({
     }
   }, []);
 
+  useEffect(() => {
+    if (!isRunning && isLoaded) {
+      const newDuration = categoryDurations[selectedCategory.id] || 25;
+      setCategory(selectedCategory.id, newDuration * 60);
+    }
+  }, [categoryDurations, selectedCategory.id, isRunning, isLoaded, setCategory]);
+
   const handleCategoryChange = useCallback((cat: PomodoroCategory) => {
     if (isRunning) return;
     setSelectedCategory(cat);
