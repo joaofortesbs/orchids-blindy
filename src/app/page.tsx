@@ -337,6 +337,7 @@ function MainApp() {
                   onDeleteCard={deleteKanbanCard}
                   onMoveCard={moveCard}
                   onUpdateCardPositions={updateCardPositions}
+                  isLoaded={isLoaded}
                 />
               </div>
             </motion.div>

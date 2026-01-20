@@ -82,16 +82,11 @@ export const DEFAULT_POMODORO_SETTINGS: PomodoroSettings = {
   },
 };
 
-export const DEFAULT_KANBAN_COLUMNS: KanbanColumn[] = [
-  { id: 'pendentes', title: 'PENDENTES', cards: [] },
-  { id: 'em-execucao', title: 'EM EXECUÇÃO', cards: [] },
-  { id: 'produzindo', title: 'PRODUZINDO', cards: [] },
-  { id: 'concluidas', title: 'CONCLUÍDAS', cards: [] },
-];
+export const DEFAULT_KANBAN_COLUMNS: KanbanColumn[] = [];
 
 export const DEFAULT_DATA: BlindadosData = {
   kanban: {
-    columns: DEFAULT_KANBAN_COLUMNS,
+    columns: [],
   },
   pomodoro: {
     settings: DEFAULT_POMODORO_SETTINGS,

@@ -44,6 +44,7 @@ interface KanbanBoardProps {
   onDeleteCard: (columnId: string, cardId: string) => void;
   onMoveCard: (cardId: string, sourceColumnId: string, targetColumnId: string, targetIndex: number) => void;
   onUpdateCardPositions: (columnId: string, cards: KanbanCard[]) => void;
+  isLoaded?: boolean;
 }
 
 const priorityColors: Record<Priority, { bg: string; text: string; label: string }> = {
@@ -330,7 +331,11 @@ export function KanbanBoard({
   onDeleteCard,
   onMoveCard,
   onUpdateCardPositions,
+  isLoaded = true,
 }: KanbanBoardProps) {
+  // Check if any column has a temporary ID (not yet persisted)
+  const hasTemporaryColumns = columns.some(c => c.id.startsWith('temp-'));
+  const canDrag = isLoaded && !hasTemporaryColumns;
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
   const [activeColumn, setActiveColumn] = useState<KanbanColumn | null>(null);
   const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
@@ -423,6 +428,11 @@ export function KanbanBoard({
   }, [columns, activeColumn]);
 
   const handleDragStart = (event: DragStartEvent) => {
+    if (!canDrag) {
+      console.log('[KanbanBoard] Drag blocked - data not ready:', { isLoaded, hasTemporaryColumns });
+      return;
+    }
+    
     const { active } = event;
     const activeData = active.data.current;
     

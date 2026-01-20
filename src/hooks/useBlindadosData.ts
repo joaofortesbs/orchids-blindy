@@ -542,30 +542,38 @@ export function useBlindadosData() {
   const updateCardPositions = useCallback(async (columnId: string, cards: KanbanCard[]) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) {
-      console.error('updateCardPositions: service not available');
+      console.error('[useBlindadosData] updateCardPositions: service not available');
       return;
     }
 
-    // Filter out temporary cards
-    const validCards = cards.filter(c => !c.id.startsWith('temp-'));
-    const hasTemporaryCards = cards.some(c => c.id.startsWith('temp-'));
+    // Skip if column is temporary (not yet persisted)
+    if (columnId.startsWith('temp-')) {
+      console.log('[useBlindadosData] updateCardPositions: Skipping - column is temporary');
+      return;
+    }
     
-    if (hasTemporaryCards) {
-      console.log('updateCardPositions: Skipping persistence - has temporary cards');
+    // Filter out temporary cards
+    const persistableCards = cards.filter(c => !c.id.startsWith('temp-'));
+    if (persistableCards.length === 0) {
+      console.log('[useBlindadosData] updateCardPositions: No persistable cards');
       return;
     }
+    
+    if (persistableCards.length !== cards.length) {
+      console.log('[useBlindadosData] updateCardPositions: Filtered out', cards.length - persistableCards.length, 'temporary cards');
+    }
 
-    console.log('updateCardPositions: Persisting', validCards.length, 'card positions in column', columnId);
+    console.log('[useBlindadosData] updateCardPositions: Persisting', persistableCards.length, 'card positions in column', columnId);
 
     try {
-      const success = await kanbanService.updateCardPositions(columnId, validCards.map((c, i) => ({ id: c.id, position: i })));
-      console.log('updateCardPositions: Persistence result:', success);
+      const success = await kanbanService.updateCardPositions(columnId, persistableCards.map((c, i) => ({ id: c.id, position: i })));
+      console.log('[useBlindadosData] updateCardPositions: Persistence result:', success);
       if (!success) {
-        console.error('updateCardPositions: Failed to persist - reloading data');
+        console.error('[useBlindadosData] updateCardPositions: Failed to persist - reloading data');
         loadData();
       }
     } catch (e) {
-      console.error('updateCardPositions error:', e);
+      console.error('[useBlindadosData] updateCardPositions error:', e);
       loadData();
     }
   }, [loadData]);

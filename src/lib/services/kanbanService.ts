@@ -408,30 +408,31 @@ export class KanbanService {
       return true;
     }
     
-    // Validate columnId is a valid UUID (not a temp ID or simple string)
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const isValidUUID = uuidRegex.test(columnId);
-    
-    debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId, '(valid UUID:', isValidUUID, ')');
-    
-    if (!isValidUUID) {
-      console.error('[KanbanService] updateCardPositions: Invalid column ID format:', columnId, '- Expected UUID');
+    // Validate columnId is not a temporary ID
+    if (columnId.startsWith('temp-')) {
+      console.error('[KanbanService] updateCardPositions: Cannot update cards in temporary column:', columnId);
       return false;
+    }
+    
+    debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId);
+    
+    // Filter out any temporary cards (they haven't been persisted yet)
+    const validCards = cards.filter(c => !c.id.startsWith('temp-'));
+    if (validCards.length === 0) {
+      debugLog('updateCardPositions: All cards are temporary, skipping');
+      return true;
+    }
+    
+    if (validCards.length !== cards.length) {
+      debugLog('updateCardPositions: Filtered out', cards.length - validCards.length, 'temporary cards');
     }
     
     try {
       return await withRetry(async () => {
         let allSuccess = true;
         
-        // Validate all card IDs are valid UUIDs
-        const invalidCards = cards.filter(c => !uuidRegex.test(c.id));
-        if (invalidCards.length > 0) {
-          console.error('[KanbanService] updateCardPositions: Invalid card IDs (not UUIDs):', invalidCards.map(c => c.id));
-          return false;
-        }
-        
-        // Process all cards in parallel for speed
-        const promises = cards.map(card =>
+        // Process all valid cards in parallel for speed
+        const promises = validCards.map(card =>
           this.supabase
             .from('kanban_cards')
             .update({ 
@@ -448,7 +449,7 @@ export class KanbanService {
         
         for (let i = 0; i < results.length; i++) {
           const { data, error } = results[i];
-          const card = cards[i];
+          const card = validCards[i];
           
           if (error) {
             // Check if it's a foreign key constraint error

@@ -45,19 +45,15 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
-- Jan 20, 2026: Kanban performance optimization v8
-  - Parallel database updates: all column/card positions updated simultaneously for speed
-  - Removed unnecessary authentication checks that could cause false failures
-  - Fixed column reordering: only updates position field (no longer updates title)
-  - Fixed column ID detection to handle both "column-{id}" and "{id}" formats
-  - Column reordering now persists with retry system and rollback on failure
-  - Card position updates within columns use parallel processing with retry system
-  - Singleton Supabase client: reuses connection for faster subsequent requests
-  - Added retry system with exponential backoff (2 retries, 300ms base delay)
-  - Added operation timeout (8 seconds) to prevent hanging requests
-  - Implemented optimistic updates for addKanbanCard/addKanbanColumn (instant UI, background save)
-  - Auto-rollback on failure: if DB save fails, optimistic items are removed
-  - Debug logging enabled: check browser console (F12) for detailed flow information
+- Jan 20, 2026: Kanban card movement fix v10
+  - ROOT CAUSE FIXED: Removed static column IDs from DEFAULT_DATA that conflicted with database UUIDs
+  - DEFAULT_KANBAN_COLUMNS now starts empty; columns are loaded from database or created on first use
+  - This ensures all column IDs are real database UUIDs, fixing movement to user-created columns
+  - Added validation to prevent operations on temporary (unsaved) columns
+  - Improved temporary card filtering in updateCardPositions service
+  - Added foreign key constraint error detection for better debugging
+  - Enhanced logging throughout moveCard and updateCardPositions flow
+  - Auto-reload data on persistence failures to sync with database state
 
 - Jan 20, 2026: Kanban persistence definitive fix v3
   - Fixed JSONB serialization: tags/subtasks now passed as arrays directly to Supabase (not JSON.stringify)
