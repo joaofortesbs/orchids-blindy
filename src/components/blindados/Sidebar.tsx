@@ -15,14 +15,16 @@ import {
   Plus,
   Building2,
   Check,
-  Settings
+  Settings,
+  Users,
+  UsersRound
 } from 'lucide-react';
 import { Organization } from '@/lib/types/organization';
 
 interface SidebarProps {
   onExport: () => void;
-  activeSection: 'flows' | 'visoes';
-  onSectionChange: (section: 'flows' | 'visoes') => void;
+  activeSection: 'flows' | 'visoes' | 'membros' | 'equipes';
+  onSectionChange: (section: 'flows' | 'visoes' | 'membros' | 'equipes') => void;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   onSignOut?: () => void;
@@ -65,7 +67,9 @@ export function Sidebar({
   ];
 
   const orgMenuItems = [
-    { id: 'flows' as const, label: 'Flows', icon: LayoutDashboard },
+    { id: 'flows' as const, label: 'Painel', icon: LayoutDashboard },
+    { id: 'membros' as const, label: 'Membros', icon: Users },
+    { id: 'equipes' as const, label: 'Equipes', icon: UsersRound },
     { id: 'visoes' as const, label: 'Visões', icon: Eye },
   ];
 

@@ -56,8 +56,16 @@ export function CreateOrganizationModal({ isOpen, onClose, onCreate }: CreateOrg
         invites: invites.filter(i => i.email.trim()),
       });
       handleClose();
-    } catch (e) {
-      setError('Erro ao criar organização. Tente novamente.');
+    } catch (err: unknown) {
+      const error = err as { message?: string; code?: string; details?: string };
+      if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
+        setError('As tabelas de organizações ainda não foram criadas no banco de dados. Execute a migração SQL no painel do Supabase.');
+      } else if (error?.code === '42501' || error?.message?.includes('permission denied')) {
+        setError('Sem permissão para criar organização. Verifique as políticas RLS no Supabase.');
+      } else {
+        setError(error?.message || 'Erro ao criar organização. Tente novamente.');
+      }
+      console.error('Create organization error:', error);
     } finally {
       setIsLoading(false);
     }

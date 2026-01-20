@@ -21,7 +21,7 @@ import { Organization, CreateOrganizationData } from '@/lib/types/organization';
 import { createClient } from '@/lib/supabase/client';
 import { format } from 'date-fns';
 
-type Section = 'flows' | 'visoes';
+type Section = 'flows' | 'visoes' | 'membros' | 'equipes';
 
 function MainApp() {
   const {
@@ -299,7 +299,7 @@ function MainApp() {
 
       <main className="flex-1 h-screen overflow-hidden">
         <AnimatePresence mode="wait" initial={false}>
-          {activeSection === 'flows' ? (
+          {activeSection === 'flows' && (
             <motion.div
               key="flows"
               initial={{ opacity: 0 }}
@@ -335,7 +335,8 @@ function MainApp() {
                 />
               </div>
             </motion.div>
-          ) : (
+          )}
+          {activeSection === 'visoes' && (
             <motion.div
               key="visoes"
               initial={{ opacity: 0 }}
@@ -345,6 +346,58 @@ function MainApp() {
               className="h-full"
             >
               <VisoesDashboard />
+            </motion.div>
+          )}
+          {activeSection === 'membros' && (
+            <motion.div
+              key="membros"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="h-full p-6"
+            >
+              <div className="bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-2xl p-6 h-full">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00f6ff]/20 to-[#7c3aed]/20 flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#00f6ff]"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-white">Membros</h2>
+                    <p className="text-sm text-white/40">Gerencie os membros da organização</p>
+                  </div>
+                </div>
+                <div className="flex flex-col items-center justify-center h-[calc(100%-80px)] text-white/40">
+                  <p className="text-lg mb-2">Nenhum membro ainda</p>
+                  <p className="text-sm">Convide membros ao criar ou editar a organização</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+          {activeSection === 'equipes' && (
+            <motion.div
+              key="equipes"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="h-full p-6"
+            >
+              <div className="bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-2xl p-6 h-full">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00f6ff]/20 to-[#7c3aed]/20 flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#00f6ff]"><path d="M18 21a8 8 0 0 0-16 0"/><circle cx="10" cy="8" r="5"/><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"/></svg>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-white">Equipes</h2>
+                    <p className="text-sm text-white/40">Organize seus membros em equipes</p>
+                  </div>
+                </div>
+                <div className="flex flex-col items-center justify-center h-[calc(100%-80px)] text-white/40">
+                  <p className="text-lg mb-2">Nenhuma equipe criada</p>
+                  <p className="text-sm">Crie equipes para organizar os membros da organização</p>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
