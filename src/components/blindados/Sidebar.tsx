@@ -23,8 +23,8 @@ import { Organization } from '@/lib/types/organization';
 
 interface SidebarProps {
   onExport: () => void;
-  activeSection: 'flows' | 'visoes' | 'painel' | 'membros' | 'equipes';
-  onSectionChange: (section: 'flows' | 'visoes' | 'painel' | 'membros' | 'equipes') => void;
+  activeSection: 'flows' | 'visoes' | 'painel' | 'equipes';
+  onSectionChange: (section: 'flows' | 'visoes' | 'painel' | 'equipes') => void;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   onSignOut?: () => void;
@@ -68,7 +68,6 @@ export function Sidebar({
 
   const profissionalItems = [
     { id: 'painel' as const, label: 'Painel', icon: Settings },
-    { id: 'membros' as const, label: 'Membros', icon: Users },
     { id: 'equipes' as const, label: 'Equipes', icon: UsersRound },
   ];
 
