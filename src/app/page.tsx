@@ -9,6 +9,7 @@ import { KanbanBoard } from '@/components/blindados/KanbanBoard';
 import { VisoesDashboard } from '@/components/visoes/VisoesDashboard';
 import { AuthPage } from '@/components/auth/AuthPage';
 import { CreateOrganizationModal } from '@/components/blindados/CreateOrganizationModal';
+import { TeamsSection } from '@/components/blindados/TeamsSection';
 import { useBlindadosData } from '@/hooks/useBlindadosData';
 import { useAutoFix } from '@/hooks/useAutoFix';
 import { LiveSession } from '@/hooks/useTimerPersistence';
@@ -21,7 +22,7 @@ import { Organization, CreateOrganizationData } from '@/lib/types/organization';
 import { createClient } from '@/lib/supabase/client';
 import { format } from 'date-fns';
 
-type Section = 'flows' | 'visoes' | 'membros' | 'equipes';
+type Section = 'flows' | 'visoes' | 'painel' | 'equipes';
 
 function MainApp() {
   const {
@@ -42,7 +43,7 @@ function MainApp() {
 
   const [activeSection, setActiveSection] = useState<Section>(() => {
     const saved = safeStorage.getString(STORAGE_KEYS.ACTIVE_SECTION);
-    if (saved === 'flows' || saved === 'visoes') return saved;
+    if (saved === 'flows' || saved === 'visoes' || saved === 'painel' || saved === 'equipes') return saved as Section;
     return 'flows';
   });
   
@@ -348,9 +349,9 @@ function MainApp() {
               <VisoesDashboard />
             </motion.div>
           )}
-          {activeSection === 'membros' && (
+          {activeSection === 'painel' && (
             <motion.div
-              key="membros"
+              key="painel"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -360,16 +361,16 @@ function MainApp() {
               <div className="bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-2xl p-6 h-full">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00f6ff]/20 to-[#7c3aed]/20 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#00f6ff]"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#00f6ff]"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                   </div>
                   <div>
-                    <h2 className="text-xl font-semibold text-white">Membros</h2>
-                    <p className="text-sm text-white/40">Gerencie os membros da organização</p>
+                    <h2 className="text-xl font-semibold text-white">Painel</h2>
+                    <p className="text-sm text-white/40">Configurações da organização</p>
                   </div>
                 </div>
                 <div className="flex flex-col items-center justify-center h-[calc(100%-80px)] text-white/40">
-                  <p className="text-lg mb-2">Nenhum membro ainda</p>
-                  <p className="text-sm">Convide membros ao criar ou editar a organização</p>
+                  <p className="text-lg mb-2">Configurações da Organização</p>
+                  <p className="text-sm">Em breve: Gerencie as configurações da sua organização</p>
                 </div>
               </div>
             </motion.div>
@@ -381,23 +382,9 @@ function MainApp() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="h-full p-6"
+              className="h-full"
             >
-              <div className="bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-2xl p-6 h-full">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00f6ff]/20 to-[#7c3aed]/20 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#00f6ff]"><path d="M18 21a8 8 0 0 0-16 0"/><circle cx="10" cy="8" r="5"/><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"/></svg>
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-semibold text-white">Equipes</h2>
-                    <p className="text-sm text-white/40">Organize seus membros em equipes</p>
-                  </div>
-                </div>
-                <div className="flex flex-col items-center justify-center h-[calc(100%-80px)] text-white/40">
-                  <p className="text-lg mb-2">Nenhuma equipe criada</p>
-                  <p className="text-sm">Crie equipes para organizar os membros da organização</p>
-                </div>
-              </div>
+              <TeamsSection />
             </motion.div>
           )}
         </AnimatePresence>
