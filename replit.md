@@ -45,6 +45,16 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 20, 2026: Kanban persistence complete overhaul v2
+  - Fixed card movements between columns persisting all card positions
+  - Fixed card reordering within same column persisting positions
+  - Added updateCardPositions method to KanbanService for bulk position updates
+  - Fixed handleDragEnd to call onMoveCard for cross-column moves
+  - Fixed handleDragEnd to call onUpdateCardPositions for same-column reorders
+  - Added originalCardPositionRef to track card initial position during drag
+  - All card edits (title, priority, description, tags, subtasks) now persist correctly
+  - Card deletion now works and persists to database
+
 - Jan 20, 2026: Kanban and Timer persistence fixes
   - Created migration for Kanban tables (migrations/003_kanban_tables.sql)
   - Added updateColumn method to KanbanService for individual column updates
