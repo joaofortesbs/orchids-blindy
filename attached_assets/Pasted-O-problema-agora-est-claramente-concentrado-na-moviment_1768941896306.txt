@@ -1,0 +1,205 @@
+O problema agora está claramente concentrado na movimentação e persistência das tarefas/cards, não mais nas colunas. Isso normalmente é combinação de lógica de drag & drop + sync + RLS/SQL ainda com furos.
+​
+
+Abaixo está um prompt único, direto para a IA que está com o código, focado em: investigar tudo, corrigir definitivamente tasks, e ainda elevar o sistema a nível “imbatível” em arquitetura Kanban e banco de dados.
+
+Prompt refinado para investigação total do Kanban
+Quero que você atue como engenheiro sênior full‑stack + arquiteto de sistemas Kanban (referência Trello/Jira/Linear) + especialista em Supabase/Postgres e RLS, com foco em performance, robustez e escalabilidade.
+
+1. Situação atual (obrigatório considerar)
+O board Kanban já está com a ordem das colunas funcionando e persistindo corretamente.
+
+O erro atual:
+
+Ainda não é possível mover as tarefas/atividades/cards entre colunas de forma definitiva.
+
+As tarefas às vezes aparecem no lugar certo no front, mas:
+
+Regridem para a coluna antiga depois de algum tempo.
+
+Somem ou aparecem em colunas erradas após recarregar a página.
+
+Já foram executados scripts SQL de migração (criação/ajuste de colunas, task_order, funções RPC, RLS básicas).
+
+Portanto, o problema restante está muito provavelmente em uma combinação de:
+
+Regras/funções antigas ainda ativas no código (lógica “corrompida” ou duplicada).
+
+Lógica de sincronização que sobrescreve o estado local com dados antigos.
+
+Políticas de Row Level Security (RLS) ou checks na função RPC que ainda bloqueiam UPDATE/INSERT em determinadas tasks/colunas.
+​
+
+2. Missão: investigação completa e correção definitiva
+Sua missão é:
+
+Fazer uma investigação profunda e sistemática de todo o código relacionado ao Kanban (board, colunas, tasks/cards, hooks, APIs, integrações com Supabase, funções RPC, RLS).
+
+Descobrir todas as causas possíveis para:
+
+Cards não mudarem de coluna no banco.
+
+Cards voltarem para a coluna antiga após alguns segundos ou após sync automático.
+
+Cards desaparecerem ou aparecerem em colunas erradas após reload.
+
+Corrigir tudo de forma robusta, moderna e avançada, deixando o sistema:
+
+Mais sólido do que implementações comuns de Trello/Jira/Linear no que diz respeito a:
+
+Consistência de dados.
+
+Performance de queries.
+
+Segurança com RLS.
+
+UX de drag & drop.
+​
+
+3. Escopo de análise (arquivos e camadas)
+Analise com atenção e, se necessário, reescreva com precisão:
+
+Camada de UI/Front (Kanban):
+
+Componentes de board, colunas e cards (ex.: KanbanBoard, Column, TaskCard).
+
+Lógica de drag & drop (dnd-kit ou similar):
+
+Funções onDragStart, onDragOver, onDragEnd e equivalentes.
+​
+
+Hooks de estado usados pelo Kanban (useKanbanData, useBlindadosData ou nomes equivalentes):
+
+Como os dados são carregados do Supabase.
+
+Como as atualizações são aplicadas (optimistic updates ou não).
+
+Qualquer setInterval, useEffect ou lógica de auto-sync que recarrega o board periodicamente.
+
+Camada de API/Backend (dentro do projeto):
+
+API routes REST ou server actions responsáveis por:
+
+Mover tasks/cards.
+
+Atualizar column_id e task_order/position.
+
+Verificar se:
+
+Estão chamando a função RPC correta (como move_task).
+
+Estão tratando erros corretamente (não engolindo erro e “achando” que deu certo).
+
+Supabase / Banco de dados:
+
+Tabelas de columns e tasks/cards:
+
+Tipos dos campos (uuid, int, etc.).
+
+Existência de column_id, task_order (ou equivalente) e user_id/owner_id.
+
+Funções RPC já criadas (como move_task, reorder_tasks, etc.) — confirme:
+
+Se realmente atualizam column_id + ordem.
+
+Se não possuem condições extras que podem falhar silenciosamente.
+
+RLS policies ativas para tasks/cards e colunas:
+
+Se as policies para UPDATE e INSERT realmente permitem que o usuário autenticado mova as tasks entre colunas do mesmo board.
+​
+
+4. Requisitos de comportamento (como o sistema deve funcionar)
+Implemente a lógica de forma a garantir:
+
+Movimento de card (UX + persistência):
+
+Ao arrastar um card para outra coluna e soltar:
+
+A UI deve atualizar imediatamente (optimistic update): card aparece na nova coluna e posição.
+
+Uma operação assíncrona deve ser disparada para persistir isso no Supabase (via RPC ou update direto).
+
+Em caso de sucesso no Supabase:
+
+Nada deve ser revertido.
+
+Em caso de erro real:
+
+Deve haver rollback consciente para o estado anterior e feedback claro (erro no console/toast).
+
+Proteção contra sobrescrita por sync:
+
+Qualquer useEffect/setInterval que recarrega dados do board NÃO pode:
+
+Sobrescrever o estado local enquanto ainda há operações pendentes de drag & drop ou save.
+
+Reaplicar dados antigos após uma operação que já foi confirmada no banco.
+
+Se necessário, implemente:
+
+Flag de pendingOps ou isSyncing para bloquear recarregamentos durante operações críticas.
+
+Um mecanismo de “versão” ou timestamp para garantir que dados antigos não substituam dados novos.
+
+RLS e segurança:
+
+As RLS policies devem:
+
+Permitir que o usuário autenticado selecione e modifique tasks/cards do board ao qual ele tem acesso.
+​
+
+Bloquear acesso a tasks de outros usuários/organizações.
+
+Teste isso diretamente no SQL:
+
+select auth.uid();
+
+Queries simulando o usuário autenticado, confirmando que consegue fazer UPDATE na row correta.
+​
+
+Robustez e modernização:
+
+Otimize queries (índices em board_id, column_id, task_order).
+​
+
+Evite lógica duplicada ou funções mortas.
+
+Escreva o fluxo de Kanban de forma limpa, previsível e extensível (pronto para: swimlanes, WIP limits, filtros, etc.).
+​
+
+5. Entregáveis esperados
+Ao final, entregue:
+
+Lista dos problemas encontrados (em alto nível), por exemplo:
+
+“Função X sobrescrevia estado local após 30s com dados antigos”.
+
+“RLS da tabela tasks bloqueava UPDATE porque o user_id não era setado na criação”.
+​
+
+Código corrigido:
+
+Hooks/estado do Kanban.
+
+Funções de drag & drop.
+
+API routes/server actions.
+
+SQL (migrações + funções RPC + RLS) que você precisar ajustar.
+
+Uma arquitetura final em que:
+
+Drag & drop funciona de forma instantânea e 100% persistente.
+
+Não há mais regressões de cards.
+
+O sistema está pronto para crescer em features sem quebrar o core de Kanban.
+
+6. Estilo de atuação
+Pense e atue como sua versão mais avançada e estratégica, sem pressa, priorizando correção absoluta sobre “gambiarras rápidas”.
+
+Não assuma que um trecho está certo só porque foi mexido recentemente: questione tudo.
+
+Onde for necessário, reescreva blocos inteiros com uma solução mais clara, robusta e moderna, inspirada nas melhores práticas de Kanban enterprise.
+​

@@ -500,49 +500,18 @@ export function useBlindadosData() {
     }
     
     const previousColumns = dataRef.current.kanban.columns;
-    const card = previousColumns.find(c => c.id === sourceColId)?.cards.find(c => c.id === cardId);
-    if (!card) {
-      console.error('[useBlindadosData] moveCard: Card not found', { cardId, sourceColId });
-      return;
-    }
     
-    let updatedSourceCards: { id: string; position: number }[] = [];
-    let updatedTargetCards: { id: string; position: number }[] = [];
-
     pendingOperationsRef.current++;
     console.log('[useBlindadosData] moveCard: Starting - pending ops:', pendingOperationsRef.current);
 
-    setData(prev => {
-      const newCols = prev.kanban.columns.map(c => {
-        if (c.id === sourceColId) {
-          const newCards = c.cards.filter(card => card.id !== cardId);
-          updatedSourceCards = newCards.filter(card => !card.id.startsWith('temp-')).map((card, i) => ({ id: card.id, position: i }));
-          return { ...c, cards: newCards };
-        }
-        if (c.id === targetColId) {
-          const list = [...c.cards];
-          list.splice(targetIdx, 0, card);
-          updatedTargetCards = list.filter(card => !card.id.startsWith('temp-')).map((card, i) => ({ id: card.id, position: i }));
-          return { ...c, cards: list };
-        }
-        return c;
-      });
-      const updated = { ...prev, kanban: { columns: newCols }, lastUpdated: new Date().toISOString() };
-      setCache(updated);
-      return updated;
-    });
-
-    console.log('[useBlindadosData] moveCard: Persisting to database...');
+    console.log('[useBlindadosData] moveCard: Using atomic RPC move_card...');
     
     try {
-      const [sourceResult, targetResult] = await Promise.all([
-        updatedSourceCards.length > 0 ? kanbanService.updateCardPositions(sourceColId, updatedSourceCards) : Promise.resolve(true),
-        updatedTargetCards.length > 0 ? kanbanService.updateCardPositions(targetColId, updatedTargetCards) : Promise.resolve(true),
-      ]);
+      const success = await kanbanService.moveCard(cardId, targetColId, targetIdx);
       
-      console.log('[useBlindadosData] moveCard: Persistence results:', { sourceResult, targetResult });
+      console.log('[useBlindadosData] moveCard: RPC result:', success);
       
-      if (!sourceResult || !targetResult) {
+      if (!success) {
         console.error('[useBlindadosData] moveCard: FAILED - restoring previous state');
         setData(prev => {
           const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };

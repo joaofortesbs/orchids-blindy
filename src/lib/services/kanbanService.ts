@@ -306,17 +306,31 @@ export class KanbanService {
   }
 
   async moveCard(cardId: string, targetColumnId: string, position: number): Promise<boolean> {
-    const { error } = await this.supabase
-      .from('kanban_cards')
-      .update({ column_id: targetColumnId, position })
-      .eq('id', cardId)
-      .eq('user_id', this.userId);
+    try {
+      debugLog('moveCard: Using RPC move_card for', cardId, 'to column', targetColumnId, 'position', position);
+      
+      const { data, error } = await this.supabase.rpc('move_card', {
+        p_card_id: cardId,
+        p_target_column_id: targetColumnId,
+        p_new_position: position,
+      });
 
-    if (error) {
-      console.error('KanbanService.moveCard error:', error.message);
+      if (error) {
+        console.error('KanbanService.moveCard RPC error:', error.message, error.details);
+        return false;
+      }
+
+      if (data && !data.success) {
+        console.error('KanbanService.moveCard RPC failed:', data.error);
+        return false;
+      }
+
+      debugLog('moveCard: SUCCESS -', data);
+      return true;
+    } catch (e) {
+      console.error('KanbanService.moveCard exception:', e);
       return false;
     }
-    return true;
   }
 
   async updateColumn(columnId: string, updates: { title?: string; position?: number }): Promise<boolean> {
@@ -408,76 +422,80 @@ export class KanbanService {
       return true;
     }
     
-    // Validate columnId is not a temporary ID
     if (columnId.startsWith('temp-')) {
       console.error('[KanbanService] updateCardPositions: Cannot update cards in temporary column:', columnId);
       return false;
     }
     
-    debugLog('updateCardPositions: Starting update for', cards.length, 'cards in column', columnId);
-    
-    // Filter out any temporary cards (they haven't been persisted yet)
     const validCards = cards.filter(c => !c.id.startsWith('temp-'));
     if (validCards.length === 0) {
       debugLog('updateCardPositions: All cards are temporary, skipping');
       return true;
     }
     
-    if (validCards.length !== cards.length) {
-      debugLog('updateCardPositions: Filtered out', cards.length - validCards.length, 'temporary cards');
-    }
+    debugLog('updateCardPositions: Using RPC for', validCards.length, 'cards in column', columnId);
     
     try {
-      return await withRetry(async () => {
-        let allSuccess = true;
-        
-        // Process all valid cards in parallel for speed
-        const promises = validCards.map(card =>
-          this.supabase
-            .from('kanban_cards')
-            .update({ 
-              position: card.position, 
-              column_id: columnId, 
-              updated_at: new Date().toISOString() 
-            })
-            .eq('id', card.id)
-            .eq('user_id', this.userId)
-            .select()
-        );
-        
-        const results = await Promise.all(promises);
-        
-        for (let i = 0; i < results.length; i++) {
-          const { data, error } = results[i];
-          const card = validCards[i];
-          
-          if (error) {
-            // Check if it's a foreign key constraint error
-            if (error.message.includes('violates foreign key constraint')) {
-              console.error('[KanbanService] updateCardPositions: Column', columnId, 'does not exist in database. Foreign key violation.');
-            } else {
-              console.error('[KanbanService] updateCardPositions error for card', card.id, ':', error.message, error.code, error.details);
-            }
-            throw error;
-          }
-          
-          const rowsAffected = data?.length || 0;
-          debugLog(`updateCardPositions: Card ${card.id} - rows affected:`, rowsAffected);
-          
-          if (rowsAffected === 0) {
-            console.error('[KanbanService] updateCardPositions: No rows affected for card', card.id, '- RLS may be blocking update');
-            allSuccess = false;
-          }
-        }
-        
-        if (allSuccess) {
-          debugLog('updateCardPositions: SUCCESS - All cards updated');
-        }
-        
-        return allSuccess;
+      const updates = validCards.map(card => ({
+        id: card.id,
+        column_id: columnId,
+        position: card.position,
+      }));
+      
+      const { data, error } = await this.supabase.rpc('update_card_positions', {
+        p_updates: updates,
       });
+
+      if (error) {
+        console.error('[KanbanService] updateCardPositions RPC error:', error.message, error.details);
+        return false;
+      }
+
+      if (data && !data.success) {
+        console.error('[KanbanService] updateCardPositions RPC failed:', data.error);
+        return false;
+      }
+
+      debugLog('updateCardPositions: SUCCESS -', data);
+      return true;
     } catch (e) {
-      console.error('[KanbanService] updateCardPositions failed after retries:', e);
+      console.error('[KanbanService] updateCardPositions exception:', e);
+      return false;
+    }
+  }
+
+  async updateColumnPositionsRPC(columns: { id: string; position: number }[]): Promise<boolean> {
+    if (columns.length === 0) {
+      debugLog('updateColumnPositionsRPC: No columns to update');
+      return true;
+    }
+    
+    debugLog('updateColumnPositionsRPC: Using RPC for', columns.length, 'columns');
+    
+    try {
+      const updates = columns.map(col => ({
+        id: col.id,
+        position: col.position,
+      }));
+      
+      const { data, error } = await this.supabase.rpc('update_column_positions', {
+        p_updates: updates,
+      });
+
+      if (error) {
+        console.error('[KanbanService] updateColumnPositionsRPC error:', error.message, error.details);
+        return false;
+      }
+
+      if (data && !data.success) {
+        console.error('[KanbanService] updateColumnPositionsRPC failed:', data.error);
+        return false;
+      }
+
+      debugLog('updateColumnPositionsRPC: SUCCESS -', data);
+      return true;
+    } catch (e) {
+      console.error('[KanbanService] updateColumnPositionsRPC exception:', e);
       return false;
     }
   }
