@@ -169,8 +169,9 @@ export function PomodoroTimer({
   }, []);
 
   const handleAddCategory = useCallback(() => {
+    const newId = crypto.randomUUID();
     const newCategory: PomodoroCategory = {
-      id: `cat-${Date.now()}`,
+      id: newId,
       name: 'Nova Categoria',
       color: '#00f6ff',
       duration: 25,
@@ -180,7 +181,7 @@ export function PomodoroTimer({
       categories: [...settings.categories, newCategory],
     };
     onSettingsChange(newSettings);
-    setCategoryDurations(prev => ({ ...prev, [newCategory.id]: 25 }));
+    setCategoryDurations(prev => ({ ...prev, [newId]: 25 }));
   }, [settings, onSettingsChange]);
 
   const handleUpdateCategory = useCallback((id: string, updates: Partial<PomodoroCategory>) => {

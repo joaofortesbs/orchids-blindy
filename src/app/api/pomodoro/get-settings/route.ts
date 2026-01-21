@@ -34,9 +34,10 @@ export async function GET(request: NextRequest) {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    const [catRes, setRes] = await Promise.all([
+    const [catRes, setRes, sesRes] = await Promise.all([
       supabase.from('pomodoro_categories').select('*').eq('user_id', user.id).order('created_at'),
       supabase.from('pomodoro_settings').select('*').eq('user_id', user.id).single(),
+      supabase.from('pomodoro_sessions').select('*').eq('user_id', user.id).order('completed_at', { ascending: false }),
     ]);
     
     console.log('[API /pomodoro/get-settings] Categories response:', {
@@ -50,11 +51,24 @@ export async function GET(request: NextRequest) {
       error: setRes.error?.message,
     });
     
+    console.log('[API /pomodoro/get-settings] Sessions response:', {
+      count: sesRes.data?.length || 0,
+      error: sesRes.error?.message,
+    });
+    
     const categories = (catRes.data || []).map((cat: any) => ({
       id: cat.id,
       name: cat.name,
       color: cat.color,
       duration: cat.duration_minutes,
+    }));
+    
+    const sessions = (sesRes.data || []).map((s: any) => ({
+      id: s.id,
+      categoryId: s.category_id,
+      duration: s.duration_minutes,
+      completedAt: s.completed_at,
+      date: s.session_date,
     }));
     
     const settings = {
@@ -66,9 +80,9 @@ export async function GET(request: NextRequest) {
       },
     };
     
-    console.log('[API /pomodoro/get-settings] Returning settings:', JSON.stringify(settings));
+    console.log('[API /pomodoro/get-settings] Returning settings with', sessions.length, 'sessions');
     
-    return NextResponse.json({ success: true, settings });
+    return NextResponse.json({ success: true, settings, sessions });
     
   } catch (e) {
     console.error('[API /pomodoro/get-settings] Exception:', e);

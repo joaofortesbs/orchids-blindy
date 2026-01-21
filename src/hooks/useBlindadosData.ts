@@ -95,11 +95,15 @@ export function useBlindadosData() {
       console.log('[useBlindadosData] loadData: Pomodoro settings response:', JSON.stringify(pomodoroSettingsRes));
       
       let pomodoroSettings = DEFAULT_POMODORO_SETTINGS;
+      let pomodoroSessions: PomodoroSession[] = [];
+      
       if (pomodoroSettingsRes.success && pomodoroSettingsRes.settings) {
         pomodoroSettings = pomodoroSettingsRes.settings;
+        pomodoroSessions = pomodoroSettingsRes.sessions || [];
         console.log('[useBlindadosData] loadData: USING SETTINGS FROM DATABASE:', JSON.stringify({
           categoriesCount: pomodoroSettings.categories?.length,
           categories: pomodoroSettings.categories?.map((c: any) => ({ id: c.id, name: c.name, duration: c.duration })),
+          sessionsCount: pomodoroSessions.length,
         }));
         
         safeStorage.remove(STORAGE_KEYS.DATA_CACHE);
@@ -110,15 +114,17 @@ export function useBlindadosData() {
         const clientData = await pomodoroService.loadData();
         if (clientData.settings.categories.length > 0) {
           pomodoroSettings = clientData.settings;
+          pomodoroSessions = clientData.sessions || [];
           console.log('[useBlindadosData] loadData: Using client-side loaded settings:', JSON.stringify({
             categoriesCount: pomodoroSettings.categories?.length,
             categories: pomodoroSettings.categories?.map((c: any) => ({ id: c.id, name: c.name, duration: c.duration })),
+            sessionsCount: pomodoroSessions.length,
           }));
         }
       }
       
       const pomodoroData = {
-        sessions: [] as any[],
+        sessions: pomodoroSessions,
         settings: pomodoroSettings,
       };
 
