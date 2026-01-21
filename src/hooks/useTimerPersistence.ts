@@ -34,6 +34,8 @@ const DEFAULT_TIMER_STATE: TimerState = {
   lastUpdated: Date.now(),
 };
 
+const TICK_INTERVAL_MS = 200;
+
 function saveTimerState(state: TimerState): void {
   const current = safeStorage.get<TimerState>(STORAGE_KEYS.TIMER_STATE);
   if (current) {
@@ -69,9 +71,19 @@ export function useTimerPersistence(
   const [isLoaded, setIsLoaded] = useState(false);
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
   
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerStateRef = useRef(timerState);
-  const supabaseSyncRef = useRef<NodeJS.Timeout | null>(null);
+  const supabaseSyncRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
+  const isProcessingRef = useRef(false);
+  const lastTickRef = useRef(Date.now());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     timerStateRef.current = timerState;
@@ -191,65 +203,92 @@ export function useTimerPersistence(
     init();
   }, [user, supabase, defaultCategoryId, defaultDurationSeconds, onSessionComplete, calculateElapsedSeconds, syncLiveSession]);
 
+  const clearAllIntervals = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  const tick = useCallback(() => {
+    if (!mountedRef.current) return;
+    if (isProcessingRef.current) return;
+    
+    const state = timerStateRef.current;
+    if (!state.isRunning || !state.startedAt) return;
+    
+    const now = Date.now();
+    const timeSinceLastTick = now - lastTickRef.current;
+    
+    if (timeSinceLastTick > 5000 && state.isRunning) {
+      console.warn('[useTimerPersistence] Large tick gap detected, recalculating...');
+    }
+    lastTickRef.current = now;
+    
+    const elapsed = state.accumulatedSeconds + Math.floor((now - state.startedAt) / 1000);
+    const remaining = Math.max(0, state.totalDurationSeconds - elapsed);
+    
+    setTimeLeft(remaining);
+    syncLiveSession(state);
+    
+    if (remaining <= 0) {
+      isProcessingRef.current = true;
+      console.log('[useTimerPersistence] Timer completed! Saving session...');
+      
+      clearAllIntervals();
+      
+      const completedState: TimerState = {
+        ...state,
+        isRunning: false,
+        startedAt: null,
+        pausedAt: null,
+        accumulatedSeconds: 0,
+        lastUpdated: now,
+      };
+      
+      setTimerState(completedState);
+      clearTimerStorage();
+      syncToSupabase(completedState);
+      syncLiveSession(completedState);
+      
+      if (onSessionComplete) {
+        const durationMinutes = Math.floor(state.totalDurationSeconds / 60);
+        console.log('[useTimerPersistence] Calling onSessionComplete:', { categoryId: state.categoryId, durationMinutes });
+        try {
+          onSessionComplete(state.categoryId, durationMinutes);
+        } catch (e) {
+          console.error('[useTimerPersistence] onSessionComplete error:', e);
+        }
+      } else {
+        console.warn('[useTimerPersistence] onSessionComplete callback not provided');
+      }
+      
+      isProcessingRef.current = false;
+    }
+  }, [syncLiveSession, syncToSupabase, onSessionComplete, clearAllIntervals]);
+
   useEffect(() => {
     if (!isLoaded) return;
 
     if (timerState.isRunning) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      
-      const tick = () => {
-        const state = timerStateRef.current;
-        if (!state.isRunning || !state.startedAt) return;
-        
-        const elapsed = state.accumulatedSeconds + Math.floor((Date.now() - state.startedAt) / 1000);
-        const remaining = Math.max(0, state.totalDurationSeconds - elapsed);
-        
-        setTimeLeft(remaining);
-        syncLiveSession(state);
-        
-        if (remaining <= 0) {
-          console.log('[useTimerPersistence] Timer completed! Saving session...');
-          
-          const completedState: TimerState = {
-            ...state,
-            isRunning: false,
-            startedAt: null,
-            accumulatedSeconds: 0,
-          };
-          
-          setTimerState(completedState);
-          clearTimerStorage();
-          syncToSupabase(completedState);
-          syncLiveSession(completedState);
-          
-          if (onSessionComplete) {
-            const durationMinutes = Math.floor(state.totalDurationSeconds / 60);
-            console.log('[useTimerPersistence] Calling onSessionComplete:', { categoryId: state.categoryId, durationMinutes });
-            onSessionComplete(state.categoryId, durationMinutes);
-          } else {
-            console.warn('[useTimerPersistence] onSessionComplete callback not provided');
-          }
-        }
-      };
+      clearAllIntervals();
+      lastTickRef.current = Date.now();
       
       tick();
-      intervalRef.current = setInterval(tick, 1000);
+      
+      intervalRef.current = setInterval(() => {
+        if (mountedRef.current) {
+          tick();
+        }
+      }, TICK_INTERVAL_MS);
     } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      clearAllIntervals();
     }
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      clearAllIntervals();
     };
-  }, [timerState.isRunning, isLoaded, onSessionComplete, syncLiveSession, syncToSupabase]);
+  }, [timerState.isRunning, isLoaded, tick, clearAllIntervals]);
 
   useEffect(() => {
     if (!isLoaded || !user) return;
@@ -282,13 +321,28 @@ export function useTimerPersistence(
   }, [syncToSupabase]);
 
   const toggle = useCallback(() => {
+    if (isProcessingRef.current) {
+      console.warn('[useTimerPersistence] Toggle blocked - processing in progress');
+      return;
+    }
+    
     const now = Date.now();
     
     setTimerState(prev => {
       let newState: TimerState;
       
       if (prev.isRunning) {
+        clearAllIntervals();
+        
         const elapsed = prev.accumulatedSeconds + (prev.startedAt ? Math.floor((now - prev.startedAt) / 1000) : 0);
+        
+        console.log('[useTimerPersistence] PAUSING timer:', { 
+          previousAccumulated: prev.accumulatedSeconds,
+          calculatedElapsed: elapsed,
+          startedAt: prev.startedAt,
+          timeSinceStart: prev.startedAt ? Math.floor((now - prev.startedAt) / 1000) : 0,
+        });
+        
         newState = {
           ...prev,
           isRunning: false,
@@ -297,7 +351,20 @@ export function useTimerPersistence(
           accumulatedSeconds: elapsed,
           lastUpdated: now,
         };
+        
+        const remaining = Math.max(0, prev.totalDurationSeconds - elapsed);
+        setTimeLeft(remaining);
+        
+        console.log('[useTimerPersistence] Paused state:', {
+          newAccumulatedSeconds: newState.accumulatedSeconds,
+          timeLeft: remaining,
+        });
       } else {
+        console.log('[useTimerPersistence] RESUMING timer:', {
+          previousAccumulated: prev.accumulatedSeconds,
+          totalDuration: prev.totalDurationSeconds,
+        });
+        
         newState = {
           ...prev,
           isRunning: true,
@@ -308,6 +375,12 @@ export function useTimerPersistence(
         
         const remaining = Math.max(0, prev.totalDurationSeconds - prev.accumulatedSeconds);
         setTimeLeft(remaining);
+        lastTickRef.current = now;
+        
+        console.log('[useTimerPersistence] Resumed state:', {
+          accumulatedSeconds: newState.accumulatedSeconds,
+          timeLeft: remaining,
+        });
       }
       
       saveTimerState(newState);
@@ -316,9 +389,13 @@ export function useTimerPersistence(
       
       return newState;
     });
-  }, [syncToSupabase, syncLiveSession]);
+  }, [syncToSupabase, syncLiveSession, clearAllIntervals]);
 
   const reset = useCallback(() => {
+    console.log('[useTimerPersistence] RESETTING timer');
+    clearAllIntervals();
+    isProcessingRef.current = false;
+    
     const newState: TimerState = {
       ...DEFAULT_TIMER_STATE,
       categoryId: timerState.categoryId,
@@ -331,10 +408,13 @@ export function useTimerPersistence(
     clearTimerStorage();
     syncToSupabase(newState);
     syncLiveSession(newState);
-  }, [timerState.categoryId, timerState.totalDurationSeconds, syncToSupabase, syncLiveSession]);
+  }, [timerState.categoryId, timerState.totalDurationSeconds, syncToSupabase, syncLiveSession, clearAllIntervals]);
 
   const setCategory = useCallback((categoryId: string, durationSeconds: number) => {
-    if (timerState.isRunning) return;
+    if (timerState.isRunning || (timerState.accumulatedSeconds > 0)) {
+      console.log('[useTimerPersistence] setCategory blocked - timer is running or paused');
+      return;
+    }
     
     const newState: TimerState = {
       ...DEFAULT_TIMER_STATE,

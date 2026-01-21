@@ -118,6 +118,7 @@ export function PomodoroTimer({
   const {
     timeLeft,
     isRunning,
+    isPaused,
     liveSession,
     isLoaded,
     toggle,
@@ -147,18 +148,21 @@ export function PomodoroTimer({
   }, []);
 
   useEffect(() => {
-    if (!isRunning && isLoaded) {
+    if (!isRunning && !isPaused && isLoaded) {
       const newDuration = categoryDurations[selectedCategory.id] || 25;
       setCategory(selectedCategory.id, newDuration * 60);
     }
-  }, [categoryDurations, selectedCategory.id, isRunning, isLoaded, setCategory]);
+  }, [categoryDurations, selectedCategory.id, isRunning, isPaused, isLoaded, setCategory]);
 
   const handleCategoryChange = useCallback((cat: PomodoroCategory) => {
-    if (isRunning) return;
+    if (isRunning || isPaused) {
+      console.log('[PomodoroTimer] Category change blocked - timer active or paused');
+      return;
+    }
     setSelectedCategory(cat);
     setCategory(cat.id, (categoryDurations[cat.id] || 25) * 60);
     setShowCategoryDropdown(false);
-  }, [isRunning, categoryDurations, setCategory]);
+  }, [isRunning, isPaused, categoryDurations, setCategory]);
 
   const formatTime = useCallback((seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -377,6 +381,11 @@ export function PomodoroTimer({
                 <Pause className="w-5 h-5" />
                 <span>Pausar</span>
               </>
+            ) : isPaused ? (
+              <>
+                <Play className="w-5 h-5" />
+                <span>Continuar</span>
+              </>
             ) : (
               <>
                 <Play className="w-5 h-5" />
@@ -393,6 +402,16 @@ export function PomodoroTimer({
             className="text-center text-white/40 text-xs mt-4"
           >
             Sessão em andamento • {liveSession.elapsedMinutes} min
+          </motion.p>
+        )}
+        
+        {isPaused && (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center text-amber-400/70 text-xs mt-4"
+          >
+            Sessão pausada • Clique em Continuar para retomar
           </motion.p>
         )}
       </div>
