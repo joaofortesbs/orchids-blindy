@@ -45,6 +45,13 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 21, 2026: POMODORO SESSION PERSISTENCE v19 - Sessions now save to database
+  - CRITICAL: Created migration 008 with correct pomodoro schema (duration_minutes, session_date, categories)
+  - Created /api/pomodoro/add-session route using service role key
+  - addPomodoroSession now uses API route with 3 retries and exponential backoff
+  - Added detailed logging throughout timer → session complete → save flow
+  - All pomodoro operations now use same robust pattern as kanban
+
 - Jan 20, 2026: ADD CARD PERSISTENCE v18 - Cards no longer disappear
   - CRITICAL: Created /api/kanban/add-card route using service role key
   - addKanbanCard now uses API route instead of client-side Supabase

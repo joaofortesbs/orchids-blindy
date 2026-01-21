@@ -87,7 +87,12 @@ export function PomodoroTimer({
   }, [settings.categories]);
 
   const handleSessionComplete = useCallback((categoryId: string, durationMinutes: number) => {
-    if (!mountedRef.current) return;
+    console.log('[PomodoroTimer] handleSessionComplete called:', { categoryId, durationMinutes });
+    
+    if (!mountedRef.current) {
+      console.warn('[PomodoroTimer] Component not mounted, skipping session complete');
+      return;
+    }
     
     if (soundEnabled && audioRef.current) {
       audioRef.current.play().catch(() => {});
@@ -103,7 +108,9 @@ export function PomodoroTimer({
       });
     }
 
+    console.log('[PomodoroTimer] Calling onSessionComplete prop...');
     onSessionComplete(categoryId, durationMinutes);
+    console.log('[PomodoroTimer] onSessionComplete called successfully');
   }, [soundEnabled, settings.categories, onSessionComplete]);
 
   const currentDuration = categoryDurations[selectedCategory.id] || 25;

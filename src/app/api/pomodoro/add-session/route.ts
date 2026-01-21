@@ -15,10 +15,14 @@ export async function POST(request: NextRequest) {
     
     console.log('[API /pomodoro/add-session] Received:', { categoryId, categoryName, durationMinutes, sessionDate });
     
-    if (!categoryId || !durationMinutes || !sessionDate) {
+    if (!categoryId || !durationMinutes) {
       console.error('[API /pomodoro/add-session] Missing required fields');
-      return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'Missing required fields: categoryId and durationMinutes are required' }, { status: 400 });
     }
+    
+    const now = new Date();
+    const finalSessionDate = sessionDate || now.toISOString().split('T')[0];
+    const finalCompletedAt = completedAt || now.toISOString();
     
     const cookieStore = await cookies();
     const authClient = createServerClient(
@@ -51,8 +55,8 @@ export async function POST(request: NextRequest) {
         category_id: categoryId,
         category_name: categoryName || '',
         duration_minutes: durationMinutes,
-        session_date: sessionDate,
-        completed_at: completedAt || new Date().toISOString(),
+        session_date: finalSessionDate,
+        completed_at: finalCompletedAt,
       })
       .select()
       .single();

@@ -1,11 +1,20 @@
 -- Migration 008: Complete Pomodoro Tables Fix
 -- This migration creates all pomodoro-related tables with the correct schema
 -- Run this in your Supabase SQL Editor
+-- IMPORTANT: This migration will DROP and recreate tables to fix schema issues
+
+-- ==============================================
+-- 0. DROP EXISTING TABLES WITH WRONG SCHEMA
+-- ==============================================
+DROP TABLE IF EXISTS pomodoro_sessions CASCADE;
+DROP TABLE IF EXISTS pomodoro_settings CASCADE;
+DROP TABLE IF EXISTS pomodoro_categories CASCADE;
+DROP TABLE IF EXISTS active_sessions CASCADE;
 
 -- ==============================================
 -- 1. CREATE POMODORO_CATEGORIES TABLE
 -- ==============================================
-CREATE TABLE IF NOT EXISTS pomodoro_categories (
+CREATE TABLE pomodoro_categories (
   id TEXT PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -18,7 +27,7 @@ CREATE TABLE IF NOT EXISTS pomodoro_categories (
 -- ==============================================
 -- 2. CREATE POMODORO_SESSIONS TABLE (CORRECT SCHEMA)
 -- ==============================================
-CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+CREATE TABLE pomodoro_sessions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   category_id TEXT NOT NULL,
@@ -32,7 +41,7 @@ CREATE TABLE IF NOT EXISTS pomodoro_sessions (
 -- ==============================================
 -- 3. CREATE POMODORO_SETTINGS TABLE (CORRECT SCHEMA)
 -- ==============================================
-CREATE TABLE IF NOT EXISTS pomodoro_settings (
+CREATE TABLE pomodoro_settings (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   short_break_minutes INTEGER NOT NULL DEFAULT 5,
   long_break_minutes INTEGER NOT NULL DEFAULT 15,
@@ -44,7 +53,7 @@ CREATE TABLE IF NOT EXISTS pomodoro_settings (
 -- ==============================================
 -- 4. CREATE ACTIVE_SESSIONS TABLE (FOR TIMER STATE)
 -- ==============================================
-CREATE TABLE IF NOT EXISTS active_sessions (
+CREATE TABLE active_sessions (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   category_id TEXT NOT NULL,
   start_time TIMESTAMPTZ,

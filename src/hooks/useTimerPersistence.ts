@@ -210,6 +210,8 @@ export function useTimerPersistence(
         syncLiveSession(state);
         
         if (remaining <= 0) {
+          console.log('[useTimerPersistence] Timer completed! Saving session...');
+          
           const completedState: TimerState = {
             ...state,
             isRunning: false,
@@ -223,7 +225,11 @@ export function useTimerPersistence(
           syncLiveSession(completedState);
           
           if (onSessionComplete) {
-            onSessionComplete(state.categoryId, Math.floor(state.totalDurationSeconds / 60));
+            const durationMinutes = Math.floor(state.totalDurationSeconds / 60);
+            console.log('[useTimerPersistence] Calling onSessionComplete:', { categoryId: state.categoryId, durationMinutes });
+            onSessionComplete(state.categoryId, durationMinutes);
+          } else {
+            console.warn('[useTimerPersistence] onSessionComplete callback not provided');
           }
         }
       };
