@@ -45,6 +45,17 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 21, 2026: TIMER PAUSE FIX v20 - Pause now works correctly
+  - CRITICAL FIX: Pause was resetting timer because categoryDurations effect triggered setCategory even when paused
+  - Added isPaused check to prevent category/duration changes while timer is paused
+  - Added mountedRef and isProcessingRef guards to prevent race conditions
+  - Added clearAllIntervals helper for clean interval management
+  - Toggle now correctly preserves accumulatedSeconds on pause
+  - setCategory blocked when timer is paused (accumulatedSeconds > 0)
+  - Faster tick interval (200ms) for smoother countdown display
+  - Added visual "Sessão pausada" indicator when paused
+  - Button shows "Continuar" when paused vs "Iniciar" when fresh
+
 - Jan 21, 2026: POMODORO SESSION PERSISTENCE v19 - Sessions now save to database
   - CRITICAL: Created migration 008 with correct pomodoro schema (duration_minutes, session_date, categories)
   - Created /api/pomodoro/add-session route using service role key
