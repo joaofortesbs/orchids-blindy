@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode, useRef, useCallback } from 'react';
-import { User, Session } from '@supabase/supabase-js';
+import { User, Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import { safeStorage } from '@/lib/utils/safeStorage';
 import { STORAGE_KEYS, AUTH_CACHE_EXPIRY, OLD_CACHE_KEYS } from '@/lib/utils/storage.constants';
@@ -16,7 +16,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   isLoading: boolean;
-  signUp: (email: string, password: string, fullName: string, nickname: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string, nickname: string) => Promise<{ error: Error | null; needsEmailConfirmation?: boolean }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
@@ -144,7 +144,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(cached.session);
       setIsLoading(false);
       
-      supabase.auth.getSession().then(({ data: { session: freshSession } }) => {
+      supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
+        const freshSession = data.session;
         if (freshSession) {
           setSession(freshSession);
           setUser(freshSession.user);
@@ -156,7 +157,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       });
     } else {
-      supabase.auth.getSession().then(({ data: { session: freshSession } }) => {
+      supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
+        const freshSession = data.session;
         setSession(freshSession);
         setUser(freshSession?.user ?? null);
         if (freshSession) {
@@ -166,7 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, newSession: Session | null) => {
       setSession(newSession);
       setUser(newSession?.user ?? null);
       
@@ -179,9 +181,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_IN' && newSession?.user) {
         const metadata = newSession.user.user_metadata;
         if (metadata?.full_name && metadata?.nickname) {
-          await createUserProfile(newSession.user.id, metadata.full_name, metadata.nickname);
+          try {
+            await createUserProfile(newSession.user.id, metadata.full_name, metadata.nickname);
+          } catch (err) {
+            console.error('[Auth] Error creating profile on sign in:', err);
+          }
         }
-        await initializeUserData(newSession.user.id);
+        try {
+          await initializeUserData(newSession.user.id);
+        } catch (err) {
+          console.error('[Auth] Error initializing user data on sign in:', err);
+        }
       }
       
       setIsLoading(false);
@@ -190,22 +200,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [isMounted, supabase]);
 
-  const signUp = async (email: string, password: string, fullName: string, nickname: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName, nickname },
-        emailRedirectTo: undefined,
-      },
-    });
+  const signUp = async (email: string, password: string, fullName: string, nickname: string): Promise<{ error: Error | null; needsEmailConfirmation?: boolean }> => {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: fullName, nickname },
+          emailRedirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/`,
+        },
+      });
 
-    if (!error && data.user) {
-      await createUserProfile(data.user.id, fullName, nickname);
-      await initializeUserData(data.user.id);
+      if (error) {
+        console.error('[Auth] SignUp error:', error.message);
+        return { error };
+      }
+
+      if (!data.user) {
+        return { error: new Error('Erro ao criar usuário. Tente novamente.') };
+      }
+
+      const needsEmailConfirmation = !data.session && (data.user.identities?.length ?? 0) > 0;
+      
+      if (data.session) {
+        try {
+          await createUserProfile(data.user.id, fullName, nickname);
+          await initializeUserData(data.user.id);
+        } catch (initError) {
+          console.error('[Auth] Error initializing user data:', initError);
+        }
+      }
+
+      return { error: null, needsEmailConfirmation };
+    } catch (err) {
+      console.error('[Auth] Unexpected signUp error:', err);
+      return { error: err instanceof Error ? err : new Error('Erro inesperado ao criar conta.') };
     }
-
-    return { error };
   };
 
   const signIn = async (email: string, password: string) => {

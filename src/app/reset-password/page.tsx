@@ -17,7 +17,7 @@ export default function ResetPasswordPage() {
   const supabase = createClient();
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: string) => {
       if (event === 'PASSWORD_RECOVERY') {
         console.log('Password recovery mode activated');
       }

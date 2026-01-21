@@ -46,10 +46,21 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       } else if (mode === 'login') {
         const { error } = await signIn(email, password);
         if (error) {
-          if (error.message.includes('Invalid login credentials')) {
+          const errorMsg = error.message.toLowerCase();
+          if (errorMsg.includes('invalid login credentials')) {
             setError('E-mail ou senha incorretos');
+          } else if (errorMsg.includes('email not confirmed') || errorMsg.includes('email_not_confirmed')) {
+            setError('Por favor, confirme seu e-mail antes de fazer login. Verifique sua caixa de entrada.');
+          } else if (errorMsg.includes('invalid email') || errorMsg.includes('invalid_email')) {
+            setError('E-mail inválido');
+          } else if (errorMsg.includes('user not found')) {
+            setError('Usuário não encontrado. Verifique seu e-mail ou cadastre-se.');
+          } else if (errorMsg.includes('too many requests') || errorMsg.includes('rate limit')) {
+            setError('Muitas tentativas. Aguarde alguns minutos antes de tentar novamente.');
+          } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
+            setError('Erro de conexão. Verifique sua internet e tente novamente.');
           } else {
-            setError(error.message);
+            setError(error.message || 'Erro ao fazer login. Tente novamente.');
           }
         } else {
           onAuthSuccess();
@@ -71,13 +82,28 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           return;
         }
 
-        const { error } = await signUp(email, password, fullName, nickname);
+        const { error, needsEmailConfirmation } = await signUp(email, password, fullName, nickname);
         if (error) {
-          if (error.message.includes('already registered')) {
-            setError('Este e-mail já está cadastrado');
+          const errorMsg = error.message.toLowerCase();
+          if (errorMsg.includes('already registered') || errorMsg.includes('user already registered')) {
+            setError('Este e-mail já está cadastrado. Tente fazer login ou use outro e-mail.');
+          } else if (errorMsg.includes('invalid email')) {
+            setError('E-mail inválido. Verifique e tente novamente.');
+          } else if (errorMsg.includes('password') && errorMsg.includes('weak')) {
+            setError('Senha muito fraca. Use uma senha mais forte.');
+          } else if (errorMsg.includes('rate limit') || errorMsg.includes('too many')) {
+            setError('Muitas tentativas. Aguarde alguns minutos.');
+          } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
+            setError('Erro de conexão. Verifique sua internet.');
           } else {
-            setError(error.message);
+            setError(error.message || 'Erro ao criar conta. Tente novamente.');
           }
+        } else if (needsEmailConfirmation) {
+          setSuccess('Conta criada! Verifique seu e-mail para confirmar o cadastro antes de fazer login.');
+          setTimeout(() => {
+            setMode('login');
+            setSuccess(null);
+          }, 4000);
         } else {
           setSuccess('Conta criada com sucesso! Você já pode fazer login.');
           setTimeout(() => {
