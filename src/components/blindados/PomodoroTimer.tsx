@@ -554,7 +554,16 @@ export function PomodoroTimer({
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => setShowSettings(false)}
+                  onClick={() => {
+                    console.log('[PomodoroTimer] Salvar configurações clicked - saving settings to database...');
+                    console.log('[PomodoroTimer] Settings to save:', {
+                      categoriesCount: settings.categories.length,
+                      categories: settings.categories.map(c => ({ id: c.id, name: c.name, color: c.color, duration: c.duration })),
+                      intervals: settings.intervals
+                    });
+                    onSettingsChange(settings);
+                    setShowSettings(false);
+                  }}
                   className="w-full py-3 rounded-xl bg-[#00f6ff] text-[#010516] font-semibold hover:bg-[#00f6ff]/90 transition-colors"
                 >
                   Salvar configurações
