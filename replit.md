@@ -45,6 +45,15 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 21, 2026: SESSION SYNC WITH UUID v23 - Sessions now persist through category changes
+  - CRITICAL: Sessions were not loading from database (initialized as empty array)
+  - Modified `/api/pomodoro/get-settings` to fetch and return sessions alongside settings
+  - Updated `useBlindadosData` to use sessions from API response
+  - Changed category ID generation from `cat-${Date.now()}` to `crypto.randomUUID()`
+  - Sessions use `categoryId` (UUID) as primary identifier, not category name
+  - TimeChart filters by `session.categoryId === cat.id` ensuring history persists
+  - Renaming, recoloring, or changing duration of categories no longer breaks session sync
+
 - Jan 21, 2026: POMODORO SETTINGS UPSERT FIX v22 - Duplicate key error resolved
   - CRITICAL: Changed from check-then-update/insert to atomic upsert with { onConflict: 'user_id' }
   - Previous approach had race condition causing "duplicate key violates unique constraint pomodoro_settings_user_id_key"
