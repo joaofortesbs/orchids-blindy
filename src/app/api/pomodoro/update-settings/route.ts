@@ -44,8 +44,9 @@ export async function POST(request: NextRequest) {
     
     if (intervals) {
       console.log('[API /pomodoro/update-settings] Saving intervals for user:', user.id, intervals);
+      console.log('[API /pomodoro/update-settings] Supabase URL:', supabaseUrl);
       
-      const { error: settingsError } = await supabase
+      const { data: settingsData, error: settingsError, count: settingsCount } = await supabase
         .from('pomodoro_settings')
         .upsert(
           {
@@ -56,23 +57,36 @@ export async function POST(request: NextRequest) {
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'user_id' }
-        );
+        )
+        .select();
       
       if (settingsError) {
-        console.error('[API /pomodoro/update-settings] Settings error:', settingsError.message, settingsError.code);
+        console.error('[API /pomodoro/update-settings] Settings error:', settingsError.message, settingsError.code, settingsError.details);
         return NextResponse.json({ success: false, error: settingsError.message }, { status: 500 });
       }
-      console.log('[API /pomodoro/update-settings] Intervals saved successfully');
+      console.log('[API /pomodoro/update-settings] Intervals saved successfully, returned data:', JSON.stringify(settingsData));
     }
     
     if (categories && Array.isArray(categories)) {
-      const { data: existingCats } = await supabase
+      console.log('[API /pomodoro/update-settings] Processing', categories.length, 'categories');
+      console.log('[API /pomodoro/update-settings] Full categories payload:', JSON.stringify(categories));
+      
+      const { data: existingCats, error: fetchError } = await supabase
         .from('pomodoro_categories')
         .select('id')
         .eq('user_id', user.id);
       
+      if (fetchError) {
+        console.error('[API /pomodoro/update-settings] Error fetching existing categories:', fetchError.message, fetchError.code);
+      }
+      
+      console.log('[API /pomodoro/update-settings] Existing categories in DB:', JSON.stringify(existingCats));
+      
       const existingIds = new Set((existingCats || []).map(c => c.id));
       const newCatIds = new Set(categories.map((c: any) => c.id));
+      
+      console.log('[API /pomodoro/update-settings] Existing IDs:', [...existingIds]);
+      console.log('[API /pomodoro/update-settings] New category IDs:', [...newCatIds]);
       
       const toDelete = [...existingIds].filter(id => !newCatIds.has(id));
       if (toDelete.length > 0) {
@@ -89,7 +103,10 @@ export async function POST(request: NextRequest) {
       }
       
       for (const cat of categories) {
-        if (!cat.id) continue;
+        if (!cat.id) {
+          console.warn('[API /pomodoro/update-settings] Category without ID, skipping:', cat);
+          continue;
+        }
         
         const durationValue = typeof cat.duration === 'number' && cat.duration > 0 ? cat.duration : 25;
         const categoryData = {
@@ -98,29 +115,36 @@ export async function POST(request: NextRequest) {
           duration_minutes: durationValue,
         };
         
+        console.log('[API /pomodoro/update-settings] Processing category:', cat.id, 'exists:', existingIds.has(cat.id), 'data:', JSON.stringify(categoryData));
+        
         if (existingIds.has(cat.id)) {
-          const { error } = await supabase.from('pomodoro_categories')
+          const { data: updateData, error } = await supabase.from('pomodoro_categories')
             .update(categoryData)
             .eq('id', cat.id)
-            .eq('user_id', user.id);
+            .eq('user_id', user.id)
+            .select();
           
           if (error) {
-            console.error('[API /pomodoro/update-settings] Update category error:', cat.id, error.message);
+            console.error('[API /pomodoro/update-settings] Update category error:', cat.id, error.message, error.code, error.details);
           } else {
-            console.log('[API /pomodoro/update-settings] Updated category:', cat.id, cat.name, cat.color, cat.duration);
+            console.log('[API /pomodoro/update-settings] Updated category:', cat.id, 'result:', JSON.stringify(updateData));
           }
         } else {
-          const { error } = await supabase.from('pomodoro_categories')
-            .insert({
-              id: cat.id,
-              user_id: user.id,
-              ...categoryData,
-            });
+          const insertPayload = {
+            id: cat.id,
+            user_id: user.id,
+            ...categoryData,
+          };
+          console.log('[API /pomodoro/update-settings] Inserting new category:', JSON.stringify(insertPayload));
+          
+          const { data: insertData, error } = await supabase.from('pomodoro_categories')
+            .insert(insertPayload)
+            .select();
           
           if (error) {
-            console.error('[API /pomodoro/update-settings] Insert category error:', cat.id, error.message);
+            console.error('[API /pomodoro/update-settings] Insert category error:', cat.id, error.message, error.code, error.details);
           } else {
-            console.log('[API /pomodoro/update-settings] Inserted category:', cat.id, cat.name, cat.color, cat.duration);
+            console.log('[API /pomodoro/update-settings] Inserted category:', cat.id, 'result:', JSON.stringify(insertData));
           }
         }
       }
