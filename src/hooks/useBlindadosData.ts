@@ -888,11 +888,10 @@ export function useBlindadosData() {
   }, [loadData]);
 
   const updatePomodoroSettings = useCallback(async (settings: PomodoroSettings) => {
-    const pomodoroService = servicesRef.current.pomodoro;
-    if (!pomodoroService) {
-      console.error('[useBlindadosData] updatePomodoroSettings: service not available');
-      return;
-    }
+    console.log('[useBlindadosData] updatePomodoroSettings: Starting', { 
+      categoriesCount: settings.categories?.length,
+      intervals: settings.intervals 
+    });
     
     setData(prev => {
       const updated = { ...prev, pomodoro: { ...prev.pomodoro, settings }, lastUpdated: new Date().toISOString() };
@@ -900,12 +899,55 @@ export function useBlindadosData() {
       return updated;
     });
     
-    try {
-      await pomodoroService.updateSettings(settings);
-    } catch (e) {
-      console.error('[useBlindadosData] updatePomodoroSettings error:', e);
+    console.log('[useBlindadosData] updatePomodoroSettings: Using API route for robust persistence...');
+    
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log('[useBlindadosData] updatePomodoroSettings: Attempt', attempt, 'of', MAX_RETRIES);
+        
+        const res = await fetch('/api/pomodoro/update-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            categories: settings.categories.map(c => ({
+              id: c.id,
+              name: c.name,
+              color: c.color,
+              duration: c.duration,
+            })),
+            intervals: settings.intervals,
+          }),
+        });
+        
+        const result = await res.json().catch(() => ({ success: false, error: 'Invalid JSON response' }));
+        
+        if (res.ok && result.success) {
+          console.log('[useBlindadosData] updatePomodoroSettings: SUCCESS on attempt', attempt);
+          return;
+        }
+        
+        lastError = new Error(`HTTP ${res.status}: ${result.error || 'Unknown error'}`);
+        console.warn('[useBlindadosData] updatePomodoroSettings: Attempt', attempt, 'failed:', lastError.message);
+        
+      } catch (e) {
+        lastError = e as Error;
+        console.warn('[useBlindadosData] updatePomodoroSettings: Attempt', attempt, 'error:', e);
+      }
+      
+      if (attempt < MAX_RETRIES) {
+        const delay = 500 * Math.pow(2, attempt - 1);
+        console.log('[useBlindadosData] updatePomodoroSettings: Waiting', delay, 'ms before retry...');
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-  }, []);
+    
+    console.error('[useBlindadosData] updatePomodoroSettings: All retries failed:', lastError);
+    console.log('[useBlindadosData] updatePomodoroSettings: Triggering re-sync from database...');
+    setTimeout(() => loadData(true), 1000);
+  }, [loadData]);
 
   const safeData: BlindadosData = {
     ...data,
