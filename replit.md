@@ -45,6 +45,16 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 21, 2026: AUTH LOGIN/SIGNUP FIX v24 - Login errors after signup resolved
+  - CRITICAL: Created migration 010 for `profiles` table with RLS policies and auto-creation trigger
+  - Missing profiles table was causing silent failures on user creation
+  - Added detection for "Email not confirmed" errors with clear user-facing message
+  - Added detection for rate limiting, network errors, invalid email errors
+  - SignUp now returns `needsEmailConfirmation` flag for proper user guidance
+  - Wrapped profile/data initialization in try-catch to prevent silent failures
+  - Added proper TypeScript types (AuthChangeEvent, Session) throughout auth code
+  - User now sees specific error messages instead of generic "E-mail ou senha incorretos"
+
 - Jan 21, 2026: SESSION SYNC WITH UUID v23 - Sessions now persist through category changes
   - CRITICAL: Sessions were not loading from database (initialized as empty array)
   - Modified `/api/pomodoro/get-settings` to fetch and return sessions alongside settings
