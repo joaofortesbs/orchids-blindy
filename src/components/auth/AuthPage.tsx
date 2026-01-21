@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Sparkles, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -10,6 +10,43 @@ interface AuthPageProps {
 }
 
 type AuthMode = 'login' | 'signup' | 'forgot-password';
+
+const RECENT_SIGNUP_KEY = 'blindados_recent_signup_email';
+const SIGNUP_TTL = 10 * 60 * 1000;
+
+function getStoredRecentSignup(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = sessionStorage.getItem(RECENT_SIGNUP_KEY);
+    if (!stored) return null;
+    const { email, timestamp } = JSON.parse(stored);
+    if (Date.now() - timestamp > SIGNUP_TTL) {
+      sessionStorage.removeItem(RECENT_SIGNUP_KEY);
+      return null;
+    }
+    return email;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredRecentSignup(email: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(RECENT_SIGNUP_KEY, JSON.stringify({ email, timestamp: Date.now() }));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearStoredRecentSignup() {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem(RECENT_SIGNUP_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [mode, setMode] = useState<AuthMode>('login');
@@ -21,8 +58,14 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [recentSignupEmail, setRecentSignupEmail] = useState<string | null>(null);
   
   const { signIn, signUp, resetPassword } = useAuth();
+
+  useEffect(() => {
+    const stored = getStoredRecentSignup();
+    if (stored) setRecentSignupEmail(stored);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,15 +87,24 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           setSuccess('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
         }
       } else if (mode === 'login') {
+        console.log('[Auth] Attempting login for:', email);
         const { error } = await signIn(email, password);
         if (error) {
           const errorMsg = error.message.toLowerCase();
-          if (errorMsg.includes('invalid login credentials')) {
-            setError('E-mail ou senha incorretos');
-          } else if (errorMsg.includes('email not confirmed') || errorMsg.includes('email_not_confirmed')) {
-            setError('Por favor, confirme seu e-mail antes de fazer login. Verifique sua caixa de entrada.');
+          console.log('[Auth] Login error:', error.message, 'Recent signup email:', recentSignupEmail);
+          
+          if (errorMsg.includes('email not confirmed') || errorMsg.includes('email_not_confirmed')) {
+            setError('Por favor, confirme seu e-mail antes de fazer login. Verifique sua caixa de entrada (incluindo spam).');
+            setRecentSignupEmail(email);
+            setStoredRecentSignup(email);
+          } else if (errorMsg.includes('invalid login credentials')) {
+            if (recentSignupEmail && recentSignupEmail.toLowerCase() === email.toLowerCase()) {
+              setError('Você ainda não confirmou seu e-mail. Por favor, verifique sua caixa de entrada (incluindo spam) e clique no link de confirmação.');
+            } else {
+              setError('E-mail ou senha incorretos. Verifique seus dados e tente novamente.');
+            }
           } else if (errorMsg.includes('invalid email') || errorMsg.includes('invalid_email')) {
-            setError('E-mail inválido');
+            setError('E-mail inválido. Verifique o formato do e-mail.');
           } else if (errorMsg.includes('user not found')) {
             setError('Usuário não encontrado. Verifique seu e-mail ou cadastre-se.');
           } else if (errorMsg.includes('too many requests') || errorMsg.includes('rate limit')) {
@@ -60,9 +112,12 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
             setError('Erro de conexão. Verifique sua internet e tente novamente.');
           } else {
+            console.error('[Auth] Unhandled login error:', error);
             setError(error.message || 'Erro ao fazer login. Tente novamente.');
           }
         } else {
+          setRecentSignupEmail(null);
+          clearStoredRecentSignup();
           onAuthSuccess();
         }
       } else {
@@ -99,12 +154,16 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
             setError(error.message || 'Erro ao criar conta. Tente novamente.');
           }
         } else if (needsEmailConfirmation) {
-          setSuccess('Conta criada! Verifique seu e-mail para confirmar o cadastro antes de fazer login.');
+          console.log('[Auth] Signup successful, email confirmation required for:', email);
+          setRecentSignupEmail(email);
+          setStoredRecentSignup(email);
+          setSuccess('Conta criada! Verifique seu e-mail (inclusive spam) para confirmar o cadastro antes de fazer login.');
           setTimeout(() => {
             setMode('login');
             setSuccess(null);
-          }, 4000);
+          }, 5000);
         } else {
+          console.log('[Auth] Signup successful, no email confirmation required for:', email);
           setSuccess('Conta criada com sucesso! Você já pode fazer login.');
           setTimeout(() => {
             setMode('login');
