@@ -45,6 +45,14 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 21, 2026: KANBAN CARD EDIT PERSISTENCE v21 - Card edits now save to database
+  - CRITICAL: Created `/api/kanban/update-card` route using service role key
+  - updateKanbanCard now uses API route instead of client-side Supabase
+  - 3 retries with exponential backoff (500ms, 1s, 2s delays)
+  - Verifies card ownership before updating
+  - Enhanced EditCardModal logging with card ID and update payload
+  - All card operations (add, update, move, reorder) now use robust server-side API routes
+
 - Jan 21, 2026: TIMER PAUSE FIX v20 - Pause now works correctly
   - CRITICAL FIX: Pause was resetting timer because categoryDurations effect triggered setCategory even when paused
   - Added isPaused check to prevent category/duration changes while timer is paused
