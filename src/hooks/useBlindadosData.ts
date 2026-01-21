@@ -386,13 +386,17 @@ export function useBlindadosData() {
   }, [loadData]);
 
   const updateKanbanCard = useCallback(async (columnId: string, cardId: string, updates: Partial<KanbanCard>) => {
-    const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) return;
+    if (!user) {
+      console.error('[useBlindadosData] updateKanbanCard: No user');
+      return;
+    }
     
     if (cardId.startsWith('temp-')) {
       console.log('[useBlindadosData] updateKanbanCard: Skipping temp card');
       return;
     }
+    
+    console.log('[useBlindadosData] updateKanbanCard: Starting update for card', cardId, 'with updates:', updates);
     
     const previousColumns = dataRef.current.kanban.columns;
     
@@ -419,29 +423,65 @@ export function useBlindadosData() {
       return updated;
     });
     
-    try {
-      const success = await kanbanService.updateCard(cardId, updates);
-      if (!success) {
-        console.error('[useBlindadosData] updateKanbanCard: FAILED - restoring previous state');
-        setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
-          setCache(updated);
-          return updated;
+    const maxRetries = 3;
+    const retryDelays = [500, 1000, 2000];
+    let success = false;
+    let lastError: string | null = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        console.log('[useBlindadosData] updateKanbanCard: API call attempt', attempt + 1);
+        
+        const response = await fetch('/api/kanban/update-card', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cardId,
+            title: updates.title,
+            description: updates.description,
+            priority: updates.priority,
+            tags: updates.tags,
+            subtasks: updates.subtasks,
+          }),
         });
-      } else {
-        console.log('[useBlindadosData] updateKanbanCard: SUCCESS');
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+          console.log('[useBlindadosData] updateKanbanCard: SUCCESS on attempt', attempt + 1, result);
+          success = true;
+          break;
+        } else {
+          lastError = result.error || 'Unknown error';
+          console.error('[useBlindadosData] updateKanbanCard: API error on attempt', attempt + 1, lastError);
+          
+          if (response.status === 401 || response.status === 403 || response.status === 404) {
+            console.error('[useBlindadosData] updateKanbanCard: Non-retryable error, stopping');
+            break;
+          }
+        }
+      } catch (e) {
+        lastError = String(e);
+        console.error('[useBlindadosData] updateKanbanCard: Exception on attempt', attempt + 1, e);
       }
-    } catch (e) {
-      console.error('[useBlindadosData] updateKanbanCard error:', e);
+      
+      if (attempt < maxRetries - 1) {
+        console.log('[useBlindadosData] updateKanbanCard: Waiting', retryDelays[attempt], 'ms before retry');
+        await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+      }
+    }
+    
+    if (!success) {
+      console.error('[useBlindadosData] updateKanbanCard: FAILED after all retries - restoring previous state. Last error:', lastError);
       setData(prev => {
         const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
-    } finally {
-      pendingOperationsRef.current--;
     }
-  }, []);
+    
+    pendingOperationsRef.current--;
+  }, [user]);
 
   const deleteKanbanCard = useCallback(async (columnId: string, cardId: string) => {
     const kanbanService = servicesRef.current.kanban;
