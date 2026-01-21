@@ -5,6 +5,8 @@ export class PomodoroService {
   constructor(private supabase: SupabaseClient, private userId: string) {}
 
   async loadData(): Promise<{ sessions: PomodoroSession[]; settings: PomodoroSettings }> {
+    console.log('[PomodoroService.loadData] Starting load for user:', this.userId);
+    
     try {
       const [catRes, sesRes, setRes] = await Promise.all([
         this.supabase.from('pomodoro_categories').select('*').eq('user_id', this.userId).order('created_at'),
@@ -12,12 +14,35 @@ export class PomodoroService {
         this.supabase.from('pomodoro_settings').select('*').eq('user_id', this.userId).single(),
       ]);
 
+      console.log('[PomodoroService.loadData] Raw DB responses:', {
+        categoriesCount: catRes.data?.length || 0,
+        categoriesError: catRes.error?.message,
+        sessionsCount: sesRes.data?.length || 0,
+        sessionsError: sesRes.error?.message,
+        settingsData: setRes.data,
+        settingsError: setRes.error?.message,
+      });
+      
+      if (catRes.data && catRes.data.length > 0) {
+        console.log('[PomodoroService.loadData] Categories from DB:', JSON.stringify(catRes.data.map(c => ({ 
+          id: c.id, 
+          name: c.name, 
+          duration_minutes: c.duration_minutes 
+        }))));
+      }
+
       const categories: PomodoroCategory[] = (catRes.data || []).map(cat => ({
         id: cat.id,
         name: cat.name,
         color: cat.color,
         duration: cat.duration_minutes,
       }));
+
+      console.log('[PomodoroService.loadData] Mapped categories:', JSON.stringify(categories.map(c => ({ 
+        id: c.id, 
+        name: c.name, 
+        duration: c.duration 
+      }))));
 
       const sessions: PomodoroSession[] = (sesRes.data || []).map(s => ({
         id: s.id,
@@ -36,9 +61,15 @@ export class PomodoroService {
         },
       };
 
+      console.log('[PomodoroService.loadData] Final settings:', JSON.stringify({
+        categoriesCount: settings.categories.length,
+        categories: settings.categories.map(c => ({ id: c.id, name: c.name, duration: c.duration })),
+        intervals: settings.intervals,
+      }));
+
       return { sessions, settings };
     } catch (e) {
-      console.error('PomodoroService.loadData error:', e);
+      console.error('[PomodoroService.loadData] Exception:', e);
       return { sessions: [], settings: DEFAULT_POMODORO_SETTINGS };
     }
   }

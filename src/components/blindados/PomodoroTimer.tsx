@@ -31,12 +31,11 @@ export function PomodoroTimer({
   });
   
   const [categoryDurations, setCategoryDurations] = useState<Record<string, number>>(() => {
-    const saved = safeStorage.get<Record<string, number>>(STORAGE_KEYS.CATEGORY_DURATIONS);
-    if (saved) return saved;
     const durations: Record<string, number> = {};
     settings.categories.forEach((cat) => {
       durations[cat.id] = cat.duration || 25;
     });
+    console.log('[PomodoroTimer] Initial categoryDurations from settings:', durations);
     return durations;
   });
   
@@ -69,18 +68,17 @@ export function PomodoroTimer({
 
   useEffect(() => {
     if (settings.categories.length > 0) {
-      const durations: Record<string, number> = { ...categoryDurations };
+      const durations: Record<string, number> = {};
       settings.categories.forEach((cat) => {
-        if (!durations[cat.id]) {
-          durations[cat.id] = cat.duration || 25;
-        }
+        durations[cat.id] = cat.duration || 25;
       });
+      console.log('[PomodoroTimer] Syncing categoryDurations from settings.categories:', durations);
       setCategoryDurations(durations);
       
       const currentCatExists = settings.categories.find(c => c.id === selectedCategory.id);
       if (!currentCatExists) {
         setSelectedCategory(settings.categories[0]);
-      } else if (currentCatExists.name !== selectedCategory.name || currentCatExists.color !== selectedCategory.color) {
+      } else if (currentCatExists.name !== selectedCategory.name || currentCatExists.color !== selectedCategory.color || currentCatExists.duration !== selectedCategory.duration) {
         setSelectedCategory(currentCatExists);
       }
     }

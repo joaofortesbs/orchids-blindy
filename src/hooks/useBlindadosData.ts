@@ -82,11 +82,45 @@ export function useBlindadosData() {
     setIsSyncing(true);
 
     try {
-      console.log('[useBlindadosData] loadData: Loading from database...');
-      const [columns, pomodoroData] = await Promise.all([
+      console.log('[useBlindadosData] loadData: Loading from database via API routes...');
+      
+      const [columns, pomodoroSettingsRes] = await Promise.all([
         kanbanService.loadColumns(),
-        pomodoroService.loadData(),
+        fetch('/api/pomodoro/get-settings', { credentials: 'include' }).then(res => {
+          console.log('[useBlindadosData] loadData: API response status:', res.status);
+          return res.json();
+        }),
       ]);
+      
+      console.log('[useBlindadosData] loadData: Pomodoro settings response:', JSON.stringify(pomodoroSettingsRes));
+      
+      let pomodoroSettings = DEFAULT_POMODORO_SETTINGS;
+      if (pomodoroSettingsRes.success && pomodoroSettingsRes.settings) {
+        pomodoroSettings = pomodoroSettingsRes.settings;
+        console.log('[useBlindadosData] loadData: USING SETTINGS FROM DATABASE:', JSON.stringify({
+          categoriesCount: pomodoroSettings.categories?.length,
+          categories: pomodoroSettings.categories?.map((c: any) => ({ id: c.id, name: c.name, duration: c.duration })),
+        }));
+        
+        safeStorage.remove(STORAGE_KEYS.DATA_CACHE);
+        console.log('[useBlindadosData] loadData: Cleared old cache to prevent stale data');
+      } else {
+        console.warn('[useBlindadosData] loadData: API failed, error:', pomodoroSettingsRes.error, '- trying client-side load...');
+        
+        const clientData = await pomodoroService.loadData();
+        if (clientData.settings.categories.length > 0) {
+          pomodoroSettings = clientData.settings;
+          console.log('[useBlindadosData] loadData: Using client-side loaded settings:', JSON.stringify({
+            categoriesCount: pomodoroSettings.categories?.length,
+            categories: pomodoroSettings.categories?.map((c: any) => ({ id: c.id, name: c.name, duration: c.duration })),
+          }));
+        }
+      }
+      
+      const pomodoroData = {
+        sessions: [] as any[],
+        settings: pomodoroSettings,
+      };
 
       const newData: BlindadosData = {
         pomodoro: pomodoroData,
@@ -97,7 +131,7 @@ export function useBlindadosData() {
       setData(newData);
       setCache(newData);
       lastSyncTimeRef.current = Date.now();
-      console.log('[useBlindadosData] loadData: Success - loaded', columns.length, 'columns');
+      console.log('[useBlindadosData] loadData: SUCCESS - loaded', columns.length, 'columns,', pomodoroSettings.categories?.length, 'categories with durations:', pomodoroSettings.categories?.map((c: any) => c.duration));
     } catch (e) {
       console.error('[useBlindadosData] loadData error:', e);
     } finally {
@@ -110,11 +144,15 @@ export function useBlindadosData() {
   useEffect(() => {
     const cached = getCache();
     if (cached) {
+      console.log('[useBlindadosData] Loading from cache, categories:', cached.pomodoro?.settings?.categories?.map((c: any) => ({ id: c.id, name: c.name, duration: c.duration })));
       setData(cached);
       setIsLoaded(true);
+    } else {
+      console.log('[useBlindadosData] No cache found');
     }
     
     if (user) {
+      console.log('[useBlindadosData] User logged in, scheduling loadData...');
       const timer = setTimeout(() => loadData(true), 100);
       return () => clearTimeout(timer);
     } else {
