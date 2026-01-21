@@ -45,6 +45,13 @@ npm run start -- -p 5000 -H 0.0.0.0
 
 ## Recent Changes
 
+- Jan 21, 2026: POMODORO SETTINGS UPSERT FIX v22 - Duplicate key error resolved
+  - CRITICAL: Changed from check-then-update/insert to atomic upsert with { onConflict: 'user_id' }
+  - Previous approach had race condition causing "duplicate key violates unique constraint pomodoro_settings_user_id_key"
+  - Now uses single atomic upsert call that handles both insert and update
+  - Added detailed logging for intervals save operation
+  - All Pomodoro settings (categories, intervals) now persist correctly
+
 - Jan 21, 2026: KANBAN CARD EDIT PERSISTENCE v21 - Card edits now save to database
   - CRITICAL: Created `/api/kanban/update-card` route using service role key
   - updateKanbanCard now uses API route instead of client-side Supabase
