@@ -43,16 +43,23 @@ export async function POST(request: NextRequest) {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     if (intervals) {
-      const { error: settingsError } = await supabase.from('pomodoro_settings').upsert({
-        user_id: user.id,
-        short_break_minutes: intervals.shortBreak,
-        long_break_minutes: intervals.longBreak,
-        cycles_until_long_break: intervals.cyclesUntilLongBreak,
-        updated_at: new Date().toISOString(),
-      });
+      console.log('[API /pomodoro/update-settings] Saving intervals for user:', user.id, intervals);
+      
+      const { error: settingsError } = await supabase
+        .from('pomodoro_settings')
+        .upsert(
+          {
+            user_id: user.id,
+            short_break_minutes: intervals.shortBreak,
+            long_break_minutes: intervals.longBreak,
+            cycles_until_long_break: intervals.cyclesUntilLongBreak,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id' }
+        );
       
       if (settingsError) {
-        console.error('[API /pomodoro/update-settings] Settings error:', settingsError.message);
+        console.error('[API /pomodoro/update-settings] Settings error:', settingsError.message, settingsError.code);
         return NextResponse.json({ success: false, error: settingsError.message }, { status: 500 });
       }
       console.log('[API /pomodoro/update-settings] Intervals saved successfully');
