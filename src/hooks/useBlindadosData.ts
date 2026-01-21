@@ -745,32 +745,107 @@ export function useBlindadosData() {
   }, [loadData]);
 
   const addPomodoroSession = useCallback(async (session: Omit<PomodoroSession, 'id'>) => {
-    const pomodoroService = servicesRef.current.pomodoro;
-    if (!pomodoroService) {
-      console.error('[useBlindadosData] addPomodoroSession: service not available');
-      return;
-    }
+    console.log('[useBlindadosData] addPomodoroSession: Starting', { categoryId: session.categoryId, duration: session.duration });
     
     const category = dataRef.current.pomodoro.settings.categories.find(c => c.id === session.categoryId);
+    const categoryName = category?.name || '';
     
-    try {
-      const newSession = await pomodoroService.addSession(session, category?.name || '');
-      
-      if (newSession) {
-        setData(prev => {
-          const updated = {
-            ...prev,
-            pomodoro: { ...prev.pomodoro, sessions: [newSession, ...prev.pomodoro.sessions] },
-            lastUpdated: new Date().toISOString(),
-          };
-          setCache(updated);
-          return updated;
+    const tempId = `temp-${Date.now()}`;
+    const optimisticSession: PomodoroSession = {
+      id: tempId,
+      categoryId: session.categoryId,
+      duration: session.duration,
+      completedAt: session.completedAt,
+      date: session.date,
+    };
+    
+    setData(prev => {
+      const updated = {
+        ...prev,
+        pomodoro: { ...prev.pomodoro, sessions: [optimisticSession, ...prev.pomodoro.sessions] },
+        lastUpdated: new Date().toISOString(),
+      };
+      setCache(updated);
+      return updated;
+    });
+    
+    console.log('[useBlindadosData] addPomodoroSession: Using API route for robust persistence...');
+    
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log('[useBlindadosData] addPomodoroSession: Attempt', attempt, 'of', MAX_RETRIES);
+        
+        const res = await fetch('/api/pomodoro/add-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            categoryId: session.categoryId,
+            categoryName,
+            durationMinutes: session.duration,
+            sessionDate: session.date,
+            completedAt: session.completedAt,
+          }),
         });
+        
+        const result = await res.json().catch(() => ({ success: false, error: 'Invalid JSON response' }));
+        
+        if (res.ok && result.success && result.session) {
+          console.log('[useBlindadosData] addPomodoroSession: SUCCESS on attempt', attempt, '- Session ID:', result.session.id);
+          
+          setData(prev => {
+            const updated = {
+              ...prev,
+              pomodoro: {
+                ...prev.pomodoro,
+                sessions: prev.pomodoro.sessions.map(s =>
+                  s.id === tempId ? result.session : s
+                ),
+              },
+              lastUpdated: new Date().toISOString(),
+            };
+            setCache(updated);
+            return updated;
+          });
+          
+          return;
+        }
+        
+        lastError = new Error(`HTTP ${res.status}: ${result.error || 'Unknown error'}`);
+        console.warn('[useBlindadosData] addPomodoroSession: Attempt', attempt, 'failed:', lastError.message);
+        
+      } catch (e) {
+        lastError = e as Error;
+        console.warn('[useBlindadosData] addPomodoroSession: Attempt', attempt, 'error:', e);
       }
-    } catch (e) {
-      console.error('[useBlindadosData] addPomodoroSession error:', e);
+      
+      if (attempt < MAX_RETRIES) {
+        const delay = 500 * Math.pow(2, attempt - 1);
+        console.log('[useBlindadosData] addPomodoroSession: Waiting', delay, 'ms before retry...');
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-  }, []);
+    
+    console.error('[useBlindadosData] addPomodoroSession: All retries failed:', lastError);
+    
+    setData(prev => {
+      const updated = {
+        ...prev,
+        pomodoro: {
+          ...prev.pomodoro,
+          sessions: prev.pomodoro.sessions.filter(s => s.id !== tempId),
+        },
+        lastUpdated: new Date().toISOString(),
+      };
+      setCache(updated);
+      return updated;
+    });
+    
+    console.log('[useBlindadosData] addPomodoroSession: Triggering re-sync from database...');
+    setTimeout(() => loadData(true), 1000);
+  }, [loadData]);
 
   const updatePomodoroSettings = useCallback(async (settings: PomodoroSettings) => {
     const pomodoroService = servicesRef.current.pomodoro;
