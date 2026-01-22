@@ -17,7 +17,11 @@ Key architectural decisions include:
 - **Real-time Synchronization**: The Pomodoro timer includes real-time session syncing, and Kanban board operations are designed to minimize flickering and ensure data consistency across clients.
 - **Comprehensive Productivity Features**:
     - **Pomodoro Timer**: Tracks work sessions, categorizes them, and provides detailed statistics with various chart views (bar, line, circular score chart) and period filtering. Sessions are persisted and linked to categories via UUIDs.
-    - **Kanban Board**: Supports drag-and-drop for cards and columns, with persistence for all operations (add, update, move, reorder, delete). Features include card editing (title, priority, description, tags, subtasks).
+    - **Kanban Board**: Supports drag-and-drop for cards and columns, with persistence for all operations (add, update, move, reorder, delete). Features include card editing (title, priority, description, tags, subtasks). **Advanced features**:
+        - **Project-based Organization**: Cards can be assigned to color-coded projects with a dropdown selector and "Todos" view for all cards.
+        - **Date/Calendar System**: Date picker for filtering, dueDate field for cards, smart visibility based on selected date.
+        - **Column Behavior Rules**: 'active' columns keep tasks visible indefinitely; 'completion' columns hide tasks after their completion date.
+        - **Separated Filtering Architecture**: Filtering is applied at render-time only, keeping DnD logic using the original columns array to prevent reordering bugs.
     - **Team Management**: Includes features for organization creation, member management (roles, permissions), team-specific dashboards, feeds, ranking systems, and goal tracking.
 - **Robust Error Handling**: Authentication flows include detailed error messages for email confirmation, rate limiting, and invalid credentials. Persistence operations incorporate try-catch blocks and error logging, with mechanisms to reload data on failure.
 
