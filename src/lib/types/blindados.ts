@@ -1,9 +1,17 @@
 export type Priority = 'alta' | 'media' | 'baixa';
+export type ColumnBehavior = 'active' | 'completion';
 
 export interface SubTask {
   id: string;
   title: string;
   completed: boolean;
+}
+
+export interface KanbanProject {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
 }
 
 export interface KanbanCard {
@@ -15,12 +23,17 @@ export interface KanbanCard {
   subtasks: SubTask[];
   createdAt: string;
   updatedAt: string;
+  projectId?: string;
+  dueDate?: string;
+  completedAt?: string;
 }
 
 export interface KanbanColumn {
   id: string;
   title: string;
   cards: KanbanCard[];
+  behavior: ColumnBehavior;
+  projectId?: string;
 }
 
 export interface PomodoroCategory {
