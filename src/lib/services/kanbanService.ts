@@ -361,11 +361,12 @@ export class KanbanService {
     }
   }
 
-  async updateColumn(columnId: string, updates: { title?: string; position?: number }): Promise<boolean> {
+  async updateColumn(columnId: string, updates: { title?: string; position?: number; behavior?: 'active' | 'completion' }): Promise<boolean> {
     try {
       const dbUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (updates.title !== undefined) dbUpdates.title = updates.title.toUpperCase();
       if (updates.position !== undefined) dbUpdates.position = updates.position;
+      if (updates.behavior !== undefined) dbUpdates.behavior = updates.behavior;
 
       const { error } = await this.supabase
         .from('kanban_columns')

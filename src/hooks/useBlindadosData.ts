@@ -663,7 +663,7 @@ export function useBlindadosData() {
     pendingOperationsRef.current--;
   }, [loadData]);
 
-  const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string }) => {
+  const updateKanbanColumn = useCallback(async (columnId: string, updates: { title?: string; behavior?: 'active' | 'completion' }) => {
     const kanbanService = servicesRef.current.kanban;
     if (!kanbanService) {
       console.error('[useBlindadosData] updateKanbanColumn: service not available');
@@ -684,7 +684,11 @@ export function useBlindadosData() {
         ...prev,
         kanban: {
           columns: prev.kanban.columns.map(c =>
-            c.id === columnId ? { ...c, title: updates.title?.toUpperCase() ?? c.title } : c
+            c.id === columnId ? { 
+              ...c, 
+              title: updates.title?.toUpperCase() ?? c.title,
+              behavior: updates.behavior ?? c.behavior,
+            } : c
           ),
           projects: prev.kanban.projects || [],
         },
