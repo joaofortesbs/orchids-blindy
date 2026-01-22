@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   
   try {
     const body = await req.json();
-    const { cardId, title, description, priority, tags, subtasks } = body;
+    const { cardId, title, description, priority, tags, subtasks, projectId, dueDate, completedAt } = body;
     
     console.log('[API update-card] Request received:', { cardId, title, priority });
     
@@ -88,6 +88,9 @@ export async function POST(req: NextRequest) {
     if (priority !== undefined) updateData.priority = priority;
     if (tags !== undefined) updateData.tags = tags;
     if (subtasks !== undefined) updateData.subtasks = subtasks;
+    if (projectId !== undefined) updateData.project_id = projectId || null;
+    if (dueDate !== undefined) updateData.due_date = dueDate || null;
+    if (completedAt !== undefined) updateData.completed_at = completedAt || null;
     
     console.log('[API update-card] Updating card:', { 
       cardId, 
@@ -140,6 +143,9 @@ export async function POST(req: NextRequest) {
       subtasks: updatedCard.subtasks || [],
       createdAt: updatedCard.created_at,
       updatedAt: updatedCard.updated_at,
+      projectId: updatedCard.project_id || undefined,
+      dueDate: updatedCard.due_date || undefined,
+      completedAt: updatedCard.completed_at || undefined,
     };
     
     return NextResponse.json({ 

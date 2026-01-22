@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { KanbanColumn, KanbanCard } from '@/lib/types/blindados';
+import { KanbanColumn, KanbanCard, KanbanProject, ColumnBehavior } from '@/lib/types/blindados';
 
 const DEFAULT_COLUMNS = ['A FAZER', 'EM PROGRESSO', 'CONCLUÍDO'];
 const MAX_RETRIES = 2;
@@ -123,6 +123,9 @@ export class KanbanService {
           subtasks: card.subtasks || [],
           createdAt: card.created_at,
           updatedAt: card.updated_at,
+          projectId: card.project_id || undefined,
+          dueDate: card.due_date || undefined,
+          completedAt: card.completed_at || undefined,
         });
         cardsMap.set(card.column_id, list);
       });
@@ -131,6 +134,8 @@ export class KanbanService {
         id: col.id,
         title: col.title,
         cards: cardsMap.get(col.id) || [],
+        behavior: (col.behavior || 'active') as ColumnBehavior,
+        projectId: col.project_id || undefined,
       }));
     } catch (e) {
       console.error('KanbanService.loadColumns error:', e);
@@ -140,28 +145,39 @@ export class KanbanService {
 
   private async createDefaultColumns(): Promise<KanbanColumn[]> {
     const columns: KanbanColumn[] = [];
+    const defaultBehaviors: ColumnBehavior[] = ['active', 'active', 'completion'];
 
     for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
       const { data, error } = await this.supabase
         .from('kanban_columns')
-        .insert({ user_id: this.userId, title: DEFAULT_COLUMNS[i], position: i })
+        .insert({ 
+          user_id: this.userId, 
+          title: DEFAULT_COLUMNS[i], 
+          position: i,
+          behavior: defaultBehaviors[i] || 'active'
+        })
         .select()
         .single();
 
       if (!error && data) {
-        columns.push({ id: data.id, title: data.title, cards: [] });
+        columns.push({ 
+          id: data.id, 
+          title: data.title, 
+          cards: [],
+          behavior: data.behavior || 'active'
+        });
       }
     }
 
     return columns;
   }
 
-  async addColumn(title: string, position: number): Promise<KanbanColumn | null> {
+  async addColumn(title: string, position: number, behavior: ColumnBehavior = 'active'): Promise<KanbanColumn | null> {
     try {
       return await withRetry(async () => {
         const { data, error } = await this.supabase
           .from('kanban_columns')
-          .insert({ user_id: this.userId, title: title.toUpperCase(), position })
+          .insert({ user_id: this.userId, title: title.toUpperCase(), position, behavior })
           .select()
           .single();
 
@@ -170,7 +186,7 @@ export class KanbanService {
           throw error;
         }
 
-        return { id: data.id, title: data.title, cards: [] };
+        return { id: data.id, title: data.title, cards: [], behavior: data.behavior || 'active' };
       });
     } catch (e) {
       console.error('KanbanService.addColumn failed after retries:', e);
@@ -195,18 +211,24 @@ export class KanbanService {
   async addCard(columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>, position: number): Promise<KanbanCard | null> {
     try {
       return await withRetry(async () => {
+        const insertData: Record<string, unknown> = {
+          user_id: this.userId,
+          column_id: columnId,
+          title: card.title,
+          description: card.description || '',
+          priority: card.priority || 'media',
+          tags: card.tags || [],
+          subtasks: card.subtasks || [],
+          position,
+        };
+        
+        if (card.projectId) insertData.project_id = card.projectId;
+        if (card.dueDate) insertData.due_date = card.dueDate;
+        if (card.completedAt) insertData.completed_at = card.completedAt;
+
         const { data, error } = await this.supabase
           .from('kanban_cards')
-          .insert({
-            user_id: this.userId,
-            column_id: columnId,
-            title: card.title,
-            description: card.description || '',
-            priority: card.priority || 'media',
-            tags: card.tags || [],
-            subtasks: card.subtasks || [],
-            position,
-          })
+          .insert(insertData)
           .select()
           .single();
 
@@ -224,6 +246,9 @@ export class KanbanService {
           subtasks: data.subtasks || [],
           createdAt: data.created_at,
           updatedAt: data.updated_at,
+          projectId: data.project_id || undefined,
+          dueDate: data.due_date || undefined,
+          completedAt: data.completed_at || undefined,
         };
       });
     } catch (e) {
@@ -240,8 +265,11 @@ export class KanbanService {
       if (updates.title !== undefined) dbUpdates.title = updates.title;
       if (updates.description !== undefined) dbUpdates.description = updates.description;
       if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
-      if (updates.tags !== undefined) dbUpdates.tags = updates.tags; // JSONB - pass array directly
-      if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks; // JSONB - pass array directly
+      if (updates.tags !== undefined) dbUpdates.tags = updates.tags;
+      if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks;
+      if (updates.projectId !== undefined) dbUpdates.project_id = updates.projectId || null;
+      if (updates.dueDate !== undefined) dbUpdates.due_date = updates.dueDate || null;
+      if (updates.completedAt !== undefined) dbUpdates.completed_at = updates.completedAt || null;
 
       console.log('KanbanService.updateCard: userId=', this.userId, 'cardId=', cardId, 'updates=', dbUpdates);
 
@@ -496,6 +524,100 @@ export class KanbanService {
       return true;
     } catch (e) {
       console.error('[KanbanService] updateColumnPositionsRPC exception:', e);
+      return false;
+    }
+  }
+
+  // ===== PROJECT METHODS =====
+  
+  async loadProjects(): Promise<KanbanProject[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('kanban_projects')
+        .select('*')
+        .eq('user_id', this.userId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('KanbanService.loadProjects error:', error.message);
+        return [];
+      }
+
+      return (data || []).map(project => ({
+        id: project.id,
+        name: project.name,
+        color: project.color,
+        createdAt: project.created_at,
+      }));
+    } catch (e) {
+      console.error('KanbanService.loadProjects exception:', e);
+      return [];
+    }
+  }
+
+  async addProject(name: string, color: string): Promise<KanbanProject | null> {
+    try {
+      const { data, error } = await this.supabase
+        .from('kanban_projects')
+        .insert({
+          user_id: this.userId,
+          name,
+          color,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('KanbanService.addProject error:', error.message);
+        return null;
+      }
+
+      return {
+        id: data.id,
+        name: data.name,
+        color: data.color,
+        createdAt: data.created_at,
+      };
+    } catch (e) {
+      console.error('KanbanService.addProject exception:', e);
+      return null;
+    }
+  }
+
+  async updateProject(projectId: string, updates: { name?: string; color?: string }): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('kanban_projects')
+        .update(updates)
+        .eq('id', projectId)
+        .eq('user_id', this.userId);
+
+      if (error) {
+        console.error('KanbanService.updateProject error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('KanbanService.updateProject exception:', e);
+      return false;
+    }
+  }
+
+  async deleteProject(projectId: string): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('kanban_projects')
+        .delete()
+        .eq('id', projectId)
+        .eq('user_id', this.userId);
+
+      if (error) {
+        console.error('KanbanService.deleteProject error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('KanbanService.deleteProject exception:', e);
       return false;
     }
   }

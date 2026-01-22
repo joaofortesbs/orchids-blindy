@@ -1,0 +1,191 @@
+PROMPT SUPER ESTRUTURADO PARA INTEGRAÇÃO TOTAL COM SUPABASE:
+
+=== OBJETIVO PRINCIPAL ===
+Garantir que TODAS as novas funcionalidades e alterações no sistema Blindados (Kanban + Pomodoro) salvem e recuperem dados DIRETAMENTE do Supabase, eliminando dependência do localStorage.
+
+=== ARQUITETURA ESPERADA ===
+
+1. ESTRUTURA DE BANCO DE DADOS (SQL)
+- Tabela: users (id, email, created_at)
+- Tabela: kanban_projects (id, user_id, name, color, created_at)
+- Tabela: kanban_columns (id, user_id, project_id, title, behavior, position, created_at)
+- Tabela: kanban_cards (id, user_id, column_id, project_id, title, description, priority, due_date, completed_at, tags, position, created_at, updated_at)
+- Tabela: kanban_subtasks (id, card_id, title, completed, created_at)
+- Tabela: pomodoro_categories (id, user_id, name, color, duration, created_at)
+- Tabela: pomodoro_settings (id, user_id, short_break, long_break, cycles_until_long_break, created_at, updated_at)
+- Tabela: pomodoro_sessions (id, user_id, category_id, duration, completed_at, session_date, created_at)
+
+2. CAMADA DE SERVIÇOS (TypeScript)
+
+✅ Ser vice: kanbanService.ts
+- getProjects(userId: string): Promise<KanbanProject[]> - Recupera projetos do Supabase
+- createProject(userId, name, color): Promise - Cria projeto E salva no BD
+- updateProject(id, data): Promise - Atualiza projeto NO BANCO
+- deleteProject(id): Promise - Deleta projeto DO BANCO
+- getColumns(userId, projectId): Promise<KanbanColumn[]> - Recupera colunas filtradas
+- addColumn(userId, projectId, title, behavior): Promise - Salva coluna NO BANCO
+- updateColumn(id, data): Promise - Atualiza coluna NO BANCO
+- deleteColumn(id): Promise - Deleta coluna DO BANCO
+- addCard(cardData): Promise - Salva card NO BANCO COM autenticação
+- updateCard(id, data): Promise - Atualiza card NO BANCO
+- deleteCard(id): Promise - Deleta card DO BANCO
+- moveCard(cardId, newColumnId, newPosition): Promise - Atualiza posição NO BANCO
+- addSubtask(cardId, title): Promise - Salva subtarefa NO BANCO
+- toggleSubtask(subtaskId): Promise - Atualiza status NO BANCO
+
+✅ Service: pomodoroService.ts
+- getSettings(userId): Promise<PomodoroSettings> - Recupera configurações do Supabase
+- updateSettings(userId, settings): Promise - Salva configurações NO BANCO
+- createSession(userId, categoryId, duration): Promise - Cria sessão E SALVA
+- getSessions(userId, startDate?, endDate?): Promise<PomodoroSession[]> - Recupera sessões com filtro de data
+- deleteSession(sessionId): Promise - Deleta sessão DO BANCO
+
+3. CAMADA DE API ROUTES (Next.js)
+
+✅ POST /api/kanban/add-card
+- Validar: userId, columnId, title, projectId obrigatórios
+- Extrair user da sessão/auth
+- Salvar NO SUPABASE: INSERT INTO kanban_cards (...) RETURNING *
+- Retornar: { success: true, data: newCard } ou { error: string }
+
+✅ POST /api/kanban/update-card
+- Validar: cardId obrigatório
+- Verificar ownership (user_id do card === user autenticado)
+- UPDATE kanban_cards SET ... WHERE id = $1 RETURNING *
+- Retornar card atualizado
+
+✅ DELETE /api/kanban/delete-card
+- Validar: cardId obrigatório
+- Verificar ownership
+- DELETE FROM kanban_cards WHERE id = $1
+- Retornar: { success: true }
+
+✅ POST /api/kanban/move-card
+- Validar: cardId, newColumnId, newPosition
+- UPDATE kanban_cards SET column_id = $1, position = $2 WHERE id = $3
+- Retornar card atualizado
+
+✅ POST /api/pomodoro/save-session
+- Validar: userId, categoryId, duration
+- INSERT INTO pomodoro_sessions (...) VALUES (...) RETURNING *
+- Retornar sessão criada
+
+4. CAMADA DE CONTEXTO (React Context)
+
+✅ KanbanContext
+- Estado: projects, columns, cards, loading, error
+- Funções: loadAllData(userId), addProject(), updateCard(), moveCard(), etc
+- TODA operação de estado DEVE chamar a API correspondente ANTES de atualizar estado
+- Implementar otimistic updates (atualizar estado + fazer requisição + revert em caso de erro)
+
+✅ PomodoroContext
+- Estado: settings, sessions, currentSession
+- Funções: loadSettings(), createSession(), getSessions()
+- Sincronizar com Supabase ao carregar e após cada mudança
+
+5. VALIDAÇÕES E ERROS
+
+✅ Todos os endpoints DEVEM:
+- Verificar autenticação (user da sessão)
+- Validar entrada (campos obrigatórios, tipos de dado)
+- Usar transactions para múltiplas operações
+- Retornar status codes apropriados (200, 400, 401, 500)
+- Logar erros para debug
+
+6. SINCRONIZAÇÃO DE ESTADO
+
+✅ Ao carregar a aplicação:
+- 1. Verificar autenticação
+- 2. Carregar dados do Supabase (projects, columns, cards, settings, sessions)
+- 3. Atualizar estado global
+
+✅ Ao fazer qualquer alteração (criar, editar, deletar):
+- 1. Atualizar estado LOCALMENTE (otimistic)
+- 2. Enviar requisição à API
+- 3. Se sucesso: manter estado como está
+- 4. Se erro: REVERTER estado e mostrar mensagem de erro
+
+7. FUNCIONALIDADES ESPECÍFICAS JÁ IMPLEMENTADAS QUE PRECISAM SER INTEGRADAS:
+
+✅ Filtro por Data no Kanban
+- Manter lógica: cards com dueDate <= data selecionada
+- Carregar dados DO SUPABASE (não localStorage)
+- Salvar dueDate E completedAt NO BANCO
+
+✅ Modal de Novo Projeto
+- Onsubmit: chamar API POST /api/kanban/create-project
+- Aguardar resposta antes de fechar modal
+- Atualizar estado com projeto novo
+
+✅ Modal de Editar Tarefa
+- Pré-popular com dados do Supabase
+- Salvar todas alterações (incluindo dueDate) NO BANCO
+- Suportrar edição de subtarefas
+
+8. PADRÃO DE CÓDIGO ESPERADO
+
+✅ Service:
+const kanbanService = {
+  async getProjects(userId: string) {
+    const { data, error } = await supabase
+      .from('kanban_projects')
+      .select('*')
+      .eq('user_id', userId);
+    if (error) throw error;
+    return data;
+  },
+  
+  async addCard(cardData: CardInput) {
+    const { data, error } = await supabase
+      .from('kanban_cards')
+      .insert([cardData])
+      .select();
+    if (error) throw error;
+    return data[0];
+  }
+};
+
+✅ API Route:
+export async function POST(req: NextRequest) {
+  const { user, error: authError } = await verifyAuth();
+  if (authError) return NextResponse.json({ error: authError }, { status: 401 });
+  
+  const body = await req.json();
+  const { title, columnId, projectId } = body;
+  
+  if (!title || !columnId) {
+    return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
+  }
+  
+  const { data, error } = await supabase
+    .from('kanban_cards')
+    .insert([{ title, column_id: columnId, project_id: projectId, user_id: user.id }])
+    .select();
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ success: true, data: data[0] });
+}
+
+9. PRIORIDADE DE IMPLEMENTAÇÃO
+
+1️⃣ CRÍTICO: Criar tabelas SQL no Supabase
+2️⃣ CRÍTICO: Implementar autenticação e verificação de user em todas as rotas
+3️⃣ CRÍTICO: Criar endpoints básicos (CRUD para cards, projetos)
+4️⃣ IMPORTANTE: Integrar contexto com APIs
+5️⃣ IMPORTANTE: Testar sincronização bidirecional
+6️⃣ MELHORIAS: Implementar real-time subscriptions
+
+10. CHECKLIST FINAL
+
+✅ Todos os CRUD salvam no Supabase
+✅ Nenhum dado importante no localStorage
+✅ Autenticação verificada em todas as rotas
+✅ Erros tratados e mostrados ao usuário
+✅ Otimistic updates funcionando
+✅ Filtros (data, projeto) funcionando com dados do BD
+✅ Modais salvam dados corretamente no BD
+✅ Sem erros TypeScript
+✅ Servidor rodando sem crashes
+
+=== PRÓXIMOS PASSOS ===
+Implementar EXATAMENTE nessa ordem, sem pular etapas, garantindo que CADA nova funcionalidade tenha conexão DIRETA e PERMANENTE com o Supabase!

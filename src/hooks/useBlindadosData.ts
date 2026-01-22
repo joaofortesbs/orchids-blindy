@@ -84,8 +84,9 @@ export function useBlindadosData() {
     try {
       console.log('[useBlindadosData] loadData: Loading from database via API routes...');
       
-      const [columns, pomodoroSettingsRes] = await Promise.all([
+      const [columns, projects, pomodoroSettingsRes] = await Promise.all([
         kanbanService.loadColumns(),
+        kanbanService.loadProjects(),
         fetch('/api/pomodoro/get-settings', { credentials: 'include' }).then(res => {
           console.log('[useBlindadosData] loadData: API response status:', res.status);
           return res.json();
@@ -130,7 +131,7 @@ export function useBlindadosData() {
 
       const newData: BlindadosData = {
         pomodoro: pomodoroData,
-        kanban: { columns, projects: dataRef.current.kanban.projects || [] },
+        kanban: { columns, projects: projects || [] },
         lastUpdated: new Date().toISOString(),
       };
 
@@ -361,6 +362,9 @@ export function useBlindadosData() {
             tags: card.tags || [],
             subtasks: card.subtasks || [],
             position,
+            projectId: card.projectId || undefined,
+            dueDate: card.dueDate || undefined,
+            completedAt: card.completedAt || undefined,
           }),
         });
         
@@ -1019,9 +1023,15 @@ export function useBlindadosData() {
     kanban: { columns: data.kanban?.columns || [], projects: data.kanban?.projects || [] },
   };
 
-  const addProject = useCallback((name: string, color: string) => {
-    const newProject = {
-      id: crypto.randomUUID(),
+  const addProject = useCallback(async (name: string, color: string) => {
+    const kanbanService = servicesRef.current.kanban;
+    if (!kanbanService) {
+      console.error('[useBlindadosData] addProject: No kanban service');
+      return;
+    }
+    
+    const tempProject = {
+      id: `temp-${crypto.randomUUID()}`,
       name,
       color,
       createdAt: new Date().toISOString(),
@@ -1031,12 +1041,50 @@ export function useBlindadosData() {
       ...prev,
       kanban: {
         ...prev.kanban,
-        projects: [...(prev.kanban.projects || []), newProject],
+        projects: [...(prev.kanban.projects || []), tempProject],
       },
       lastUpdated: new Date().toISOString(),
     }));
     
-    console.log('[useBlindadosData] addProject: Created project:', newProject);
+    console.log('[useBlindadosData] addProject: Optimistically added project:', tempProject);
+    
+    try {
+      const savedProject = await kanbanService.addProject(name, color);
+      
+      if (savedProject) {
+        setData(prev => ({
+          ...prev,
+          kanban: {
+            ...prev.kanban,
+            projects: prev.kanban.projects.map(p => 
+              p.id === tempProject.id ? savedProject : p
+            ),
+          },
+          lastUpdated: new Date().toISOString(),
+        }));
+        console.log('[useBlindadosData] addProject: SUCCESS - saved to database:', savedProject);
+      } else {
+        setData(prev => ({
+          ...prev,
+          kanban: {
+            ...prev.kanban,
+            projects: prev.kanban.projects.filter(p => p.id !== tempProject.id),
+          },
+          lastUpdated: new Date().toISOString(),
+        }));
+        console.error('[useBlindadosData] addProject: FAILED - reverted');
+      }
+    } catch (e) {
+      console.error('[useBlindadosData] addProject: Exception:', e);
+      setData(prev => ({
+        ...prev,
+        kanban: {
+          ...prev.kanban,
+          projects: prev.kanban.projects.filter(p => p.id !== tempProject.id),
+        },
+        lastUpdated: new Date().toISOString(),
+      }));
+    }
   }, []);
 
   return {

@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   
   try {
     const body = await req.json();
-    const { columnId, title, description, priority, tags, subtasks, position } = body;
+    const { columnId, title, description, priority, tags, subtasks, position, projectId, dueDate, completedAt } = body;
     
     console.log('[API add-card] Request received:', { columnId, title, position });
     
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     
     console.log('[API add-card] Column verified:', columnId);
     
-    const cardData = {
+    const cardData: Record<string, unknown> = {
       user_id: user.id,
       column_id: columnId,
       title: title.trim(),
@@ -84,6 +84,10 @@ export async function POST(req: NextRequest) {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    
+    if (projectId) cardData.project_id = projectId;
+    if (dueDate) cardData.due_date = dueDate;
+    if (completedAt) cardData.completed_at = completedAt;
     
     console.log('[API add-card] Inserting card:', { 
       userId: user.id, 
@@ -136,6 +140,9 @@ export async function POST(req: NextRequest) {
       subtasks: newCard.subtasks || [],
       createdAt: newCard.created_at,
       updatedAt: newCard.updated_at,
+      projectId: newCard.project_id || undefined,
+      dueDate: newCard.due_date || undefined,
+      completedAt: newCard.completed_at || undefined,
     };
     
     return NextResponse.json({ 

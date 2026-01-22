@@ -24,6 +24,12 @@ Key architectural decisions include:
         - **Separated Filtering Architecture**: Filtering is applied at render-time only, keeping DnD logic using the original columns array to prevent reordering bugs.
     - **Team Management**: Includes features for organization creation, member management (roles, permissions), team-specific dashboards, feeds, ranking systems, and goal tracking.
 - **Robust Error Handling**: Authentication flows include detailed error messages for email confirmation, rate limiting, and invalid credentials. Persistence operations incorporate try-catch blocks and error logging, with mechanisms to reload data on failure.
+- **Supabase Integration for Projects**: The Kanban system now fully persists projects to Supabase via `kanban_projects` table. Cards support `projectId`, `dueDate`, and `completedAt` fields that are saved to the database. Columns support `behavior` field for active/completion rules.
+
+# Database Migrations
+
+The following SQL migrations may need to be executed in Supabase SQL Editor:
+- `supabase/migrations/001_add_projects_and_fields.sql` - Creates `kanban_projects` table and adds new columns to `kanban_cards` and `kanban_columns`
 
 # External Dependencies
 
