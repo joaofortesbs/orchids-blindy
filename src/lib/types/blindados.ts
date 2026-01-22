@@ -53,7 +53,7 @@ export interface TimeChartData {
   totalMinutes: number;
 }
 
-export type ChartViewType = 'bar' | 'line';
+export type ChartViewType = 'bar' | 'line' | 'score';
 export type ChartPeriod = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 export interface BlindadosData {

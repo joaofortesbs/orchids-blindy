@@ -2,8 +2,8 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, Legend } from 'recharts';
-import { BarChart3, TrendingUp, Zap, Pause } from 'lucide-react';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, PieChart, Pie } from 'recharts';
+import { BarChart3, TrendingUp, Zap, Pause, Target, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PomodoroSession, PomodoroCategory, ChartViewType, ChartPeriod } from '@/lib/types/blindados';
 import { LiveSession } from '@/hooks/useTimerPersistence';
 import { timerSyncManager, LiveSessionEvent } from '@/lib/utils/timerSync';
@@ -25,6 +25,7 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
   const [syncedSession, setSyncedSession] = useState<LiveSessionEvent | null>(null);
   const [forceUpdate, setForceUpdate] = useState(0);
   const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedSessionIndex, setSelectedSessionIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!timerSyncManager) return;
@@ -228,6 +229,74 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
     return total;
   }, [sessions, effectiveLiveSession, forceUpdate]);
 
+  const scoreData = useMemo(() => {
+    const now = new Date();
+    let startDate: Date;
+    let endDate = now;
+
+    switch (period) {
+      case 'daily':
+        startDate = subDays(now, 0);
+        break;
+      case 'weekly':
+        startDate = startOfWeek(now, { locale: ptBR });
+        endDate = endOfWeek(now, { locale: ptBR });
+        break;
+      case 'monthly':
+        startDate = startOfMonth(now);
+        endDate = endOfMonth(now);
+        break;
+      case 'yearly':
+        startDate = startOfYear(now);
+        endDate = endOfYear(now);
+        break;
+    }
+
+    const periodSessions = sessions.filter((session) => {
+      const sessionDate = parseISO(session.date);
+      if (period === 'daily') {
+        return format(sessionDate, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd');
+      }
+      return isWithinInterval(sessionDate, { start: startDate, end: endDate });
+    });
+
+    const categoryTotals = categories.map((cat) => {
+      const catSessions = periodSessions.filter(s => s.categoryId === cat.id);
+      let totalMinutes = catSessions.reduce((acc, s) => acc + s.duration, 0);
+      
+      if (effectiveLiveSession && effectiveLiveSession.categoryId === cat.id) {
+        totalMinutes += effectiveLiveSession.elapsedSeconds / 60;
+      }
+
+      return {
+        id: cat.id,
+        name: cat.name,
+        value: Math.round(totalMinutes * 100) / 100,
+        color: cat.color,
+        sessions: catSessions,
+        isLive: effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isRunning,
+        isPaused: effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused,
+      };
+    }).filter(cat => cat.value > 0 || cat.isLive);
+
+    const allSessions = periodSessions.map((session) => {
+      const cat = categories.find(c => c.id === session.categoryId);
+      return {
+        ...session,
+        categoryName: cat?.name || 'Desconhecido',
+        categoryColor: cat?.color || '#6b7280',
+      };
+    }).sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
+
+    const totalMinutes = categoryTotals.reduce((acc, cat) => acc + cat.value, 0);
+
+    return {
+      pieData: categoryTotals,
+      allSessions,
+      totalMinutes,
+    };
+  }, [sessions, categories, period, effectiveLiveSession, forceUpdate]);
+
   const formatTotalTime = (minutes: number) => {
     const mins = Math.floor(minutes);
     const secs = Math.round((minutes - mins) * 60);
@@ -334,92 +403,244 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
                 >
                   <TrendingUp className="w-4 h-4" />
                 </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => { setChartType('score'); setSelectedSessionIndex(null); }}
+                  className={`p-2 rounded-lg transition-colors ${
+                    chartType === 'score' ? 'bg-[#00f6ff]/20 text-[#00f6ff]' : 'bg-white/5 text-white/40'
+                  }`}
+                >
+                  <Target className="w-4 h-4" />
+                </motion.button>
               </div>
             </div>
           </div>
 
           <div className="flex-1 min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
-              {chartType === 'bar' ? (
-                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                  <XAxis 
-                    dataKey="name" 
-                    stroke="#ffffff40" 
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis 
-                    stroke="#ffffff40" 
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `${Math.floor(value)}m`}
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  {visibleCategories.map((cat) => (
-                    <Bar 
-                      key={cat.id}
-                      dataKey={cat.id}
-                      fill={cat.color}
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={40}
-                      isAnimationActive={isAnimationEnabled}
-                    >
-                      {chartData.map((entry, index) => {
-                        const isLive = effectiveLiveSession?.categoryId === cat.id && index === chartData.length - 1;
-                        const isPaused = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused && index === chartData.length - 1;
-                        return (
-                          <Cell 
-                            key={`cell-${index}`}
-                            fill={cat.color}
-                            style={{
-                              filter: isLive && !isPaused
-                                ? `drop-shadow(0 0 8px ${cat.color})` 
-                                : isPaused 
-                                  ? `drop-shadow(0 0 4px #f59e0b)`
-                                  : undefined,
-                            }}
-                          />
-                        );
-                      })}
-                    </Bar>
-                  ))}
-                </BarChart>
-              ) : (
-                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                  <XAxis 
-                    dataKey="name" 
-                    stroke="#ffffff40" 
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis 
-                    stroke="#ffffff40" 
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `${Math.floor(value)}m`}
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  {visibleCategories.map((cat) => (
-                    <Line 
-                      key={cat.id}
-                      type="monotone"
-                      dataKey={cat.id}
-                      stroke={cat.color}
-                      strokeWidth={2}
-                      dot={{ fill: cat.color, strokeWidth: 0, r: 4 }}
-                      activeDot={{ r: 6, strokeWidth: 0 }}
-                      isAnimationActive={isAnimationEnabled}
+            {chartType === 'score' ? (
+              <div className="flex h-full gap-4">
+                <div className="flex-1 flex items-center justify-center relative">
+                  <div className="relative w-full h-full flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={scoreData.pieData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius="60%"
+                          outerRadius="85%"
+                          paddingAngle={2}
+                          dataKey="value"
+                          isAnimationActive={isAnimationEnabled}
+                          stroke="none"
+                        >
+                          {scoreData.pieData.map((entry, index) => (
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={entry.color}
+                              style={{
+                                filter: entry.isLive && !entry.isPaused
+                                  ? `drop-shadow(0 0 8px ${entry.color})`
+                                  : entry.isPaused
+                                    ? `drop-shadow(0 0 4px #f59e0b)`
+                                    : undefined,
+                                cursor: 'pointer',
+                              }}
+                            />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-white tabular-nums">
+                          {Math.floor(scoreData.totalMinutes)}m
+                        </div>
+                        <div className="text-xs text-white/50">
+                          {scoreData.pieData.length} {scoreData.pieData.length === 1 ? 'categoria' : 'categorias'}
+                        </div>
+                        {effectiveLiveSession && (
+                          <div className={`flex items-center justify-center gap-1 mt-1 text-xs ${
+                            effectiveLiveSession.isPaused ? 'text-amber-400' : 'text-[#00f6ff]'
+                          }`}>
+                            {effectiveLiveSession.isRunning ? (
+                              <Zap className="w-3 h-3 animate-pulse" />
+                            ) : (
+                              <Pause className="w-3 h-3" />
+                            )}
+                            <span>ao vivo</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="w-48 flex flex-col">
+                  <div className="text-xs text-white/50 mb-2 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>Sessões ({scoreData.allSessions.length})</span>
+                  </div>
+                  
+                  {scoreData.allSessions.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center text-xs text-white/30">
+                      Nenhuma sessão
+                    </div>
+                  ) : (
+                    <div className="flex-1 overflow-hidden flex flex-col">
+                      {selectedSessionIndex !== null && scoreData.allSessions[selectedSessionIndex] ? (
+                        <motion.div
+                          initial={{ opacity: 0, x: 10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          className="flex-1 flex flex-col"
+                        >
+                          <button
+                            onClick={() => setSelectedSessionIndex(null)}
+                            className="flex items-center gap-1 text-xs text-[#00f6ff] hover:text-[#00f6ff]/80 mb-2"
+                          >
+                            <ChevronLeft className="w-3 h-3" />
+                            Voltar
+                          </button>
+                          <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                            <div className="flex items-center gap-2 mb-2">
+                              <div 
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: scoreData.allSessions[selectedSessionIndex].categoryColor }}
+                              />
+                              <span className="text-sm text-white font-medium">
+                                {scoreData.allSessions[selectedSessionIndex].categoryName}
+                              </span>
+                            </div>
+                            <div className="text-xl font-bold text-white tabular-nums">
+                              {scoreData.allSessions[selectedSessionIndex].duration}m
+                            </div>
+                            <div className="text-xs text-white/40 mt-1">
+                              {format(parseISO(scoreData.allSessions[selectedSessionIndex].completedAt), "dd/MM 'às' HH:mm", { locale: ptBR })}
+                            </div>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <div className="flex-1 overflow-y-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-white/10">
+                          {scoreData.allSessions.slice(0, 10).map((session, idx) => (
+                            <motion.button
+                              key={session.id}
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: idx * 0.03 }}
+                              onClick={() => setSelectedSessionIndex(idx)}
+                              className="w-full flex items-center gap-2 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+                            >
+                              <div 
+                                className="w-2 h-2 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: session.categoryColor }}
+                              />
+                              <div className="flex-1 text-left min-w-0">
+                                <div className="text-xs text-white truncate">{session.categoryName}</div>
+                                <div className="text-[10px] text-white/40">
+                                  {format(parseISO(session.completedAt), 'HH:mm', { locale: ptBR })}
+                                </div>
+                              </div>
+                              <div className="text-xs text-white/60 font-medium tabular-nums">
+                                {session.duration}m
+                              </div>
+                              <ChevronRight className="w-3 h-3 text-white/20 group-hover:text-white/40" />
+                            </motion.button>
+                          ))}
+                          {scoreData.allSessions.length > 10 && (
+                            <div className="text-xs text-white/30 text-center py-1">
+                              +{scoreData.allSessions.length - 10} mais
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                {chartType === 'bar' ? (
+                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke="#ffffff40" 
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
                     />
-                  ))}
-              </LineChart>
+                    <YAxis 
+                      stroke="#ffffff40" 
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => `${Math.floor(value)}m`}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    {visibleCategories.map((cat) => (
+                      <Bar 
+                        key={cat.id}
+                        dataKey={cat.id}
+                        fill={cat.color}
+                        radius={[4, 4, 0, 0]}
+                        maxBarSize={40}
+                        isAnimationActive={isAnimationEnabled}
+                      >
+                        {chartData.map((entry, index) => {
+                          const isLive = effectiveLiveSession?.categoryId === cat.id && index === chartData.length - 1;
+                          const isPaused = effectiveLiveSession?.categoryId === cat.id && effectiveLiveSession?.isPaused && index === chartData.length - 1;
+                          return (
+                            <Cell 
+                              key={`cell-${index}`}
+                              fill={cat.color}
+                              style={{
+                                filter: isLive && !isPaused
+                                  ? `drop-shadow(0 0 8px ${cat.color})` 
+                                  : isPaused 
+                                    ? `drop-shadow(0 0 4px #f59e0b)`
+                                    : undefined,
+                              }}
+                            />
+                          );
+                        })}
+                      </Bar>
+                    ))}
+                  </BarChart>
+                ) : (
+                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke="#ffffff40" 
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis 
+                      stroke="#ffffff40" 
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => `${Math.floor(value)}m`}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    {visibleCategories.map((cat) => (
+                      <Line 
+                        key={cat.id}
+                        type="monotone"
+                        dataKey={cat.id}
+                        stroke={cat.color}
+                        strokeWidth={2}
+                        dot={{ fill: cat.color, strokeWidth: 0, r: 4 }}
+                        activeDot={{ r: 6, strokeWidth: 0 }}
+                        isAnimationActive={isAnimationEnabled}
+                      />
+                    ))}
+                  </LineChart>
+                )}
+              </ResponsiveContainer>
             )}
-          </ResponsiveContainer>
         </div>
 
           <div className="flex items-center justify-between mt-4">
