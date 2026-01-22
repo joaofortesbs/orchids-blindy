@@ -450,6 +450,39 @@ export function TimeChart({ sessions, categories, liveSession: propLiveSession }
                             />
                           ))}
                         </Pie>
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload[0]) return null;
+                            const data = payload[0].payload;
+                            const minutes = Math.floor(data.value);
+                            const seconds = Math.round((data.value - minutes) * 60);
+                            const percentage = scoreData.totalMinutes > 0 
+                              ? Math.round((data.value / scoreData.totalMinutes) * 100) 
+                              : 0;
+                            return (
+                              <div className="bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-xl p-3 shadow-xl">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div 
+                                    className={`w-3 h-3 rounded-full ${data.isLive ? 'animate-pulse' : ''}`}
+                                    style={{ backgroundColor: data.color }}
+                                  />
+                                  <span className="text-white font-medium text-sm">{data.name}</span>
+                                  {data.isLive && <Zap className="w-3 h-3 text-[#00f6ff]" />}
+                                  {data.isPaused && <Pause className="w-3 h-3 text-amber-400" />}
+                                </div>
+                                <div className="text-white text-lg font-bold tabular-nums">
+                                  {minutes}m {seconds}s
+                                </div>
+                                <div className="text-white/50 text-xs">
+                                  {percentage}% do total
+                                </div>
+                                <div className="text-white/40 text-xs mt-1">
+                                  {data.sessions.length} {data.sessions.length === 1 ? 'sessão' : 'sessões'}
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
