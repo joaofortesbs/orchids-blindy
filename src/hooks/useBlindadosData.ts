@@ -1028,12 +1028,6 @@ export function useBlindadosData() {
   };
 
   const addProject = useCallback(async (name: string, color: string) => {
-    const kanbanService = servicesRef.current.kanban;
-    if (!kanbanService) {
-      console.error('[useBlindadosData] addProject: No kanban service');
-      return;
-    }
-    
     const tempProject = {
       id: `temp-${crypto.randomUUID()}`,
       name,
@@ -1053,20 +1047,26 @@ export function useBlindadosData() {
     console.log('[useBlindadosData] addProject: Optimistically added project:', tempProject);
     
     try {
-      const savedProject = await kanbanService.addProject(name, color);
+      const response = await fetch('/api/kanban/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, color }),
+      });
       
-      if (savedProject) {
+      const result = await response.json();
+      
+      if (response.ok && result.success && result.project) {
         setData(prev => ({
           ...prev,
           kanban: {
             ...prev.kanban,
             projects: prev.kanban.projects.map(p => 
-              p.id === tempProject.id ? savedProject : p
+              p.id === tempProject.id ? result.project : p
             ),
           },
           lastUpdated: new Date().toISOString(),
         }));
-        console.log('[useBlindadosData] addProject: SUCCESS - saved to database:', savedProject);
+        console.log('[useBlindadosData] addProject: SUCCESS - saved to database:', result.project);
       } else {
         setData(prev => ({
           ...prev,
@@ -1076,7 +1076,7 @@ export function useBlindadosData() {
           },
           lastUpdated: new Date().toISOString(),
         }));
-        console.error('[useBlindadosData] addProject: FAILED - reverted');
+        console.error('[useBlindadosData] addProject: FAILED - reverted:', result.error);
       }
     } catch (e) {
       console.error('[useBlindadosData] addProject: Exception:', e);
