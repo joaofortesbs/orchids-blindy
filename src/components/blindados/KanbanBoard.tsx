@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   DndContext,
@@ -30,14 +30,16 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, MoreVertical, GripVertical, Trash2, X, Check, Pencil, Move } from 'lucide-react';
-import { KanbanColumn, KanbanCard, Priority, SubTask } from '@/lib/types/blindados';
+import { Plus, MoreVertical, GripVertical, Trash2, X, Check, Pencil, Move, FolderKanban, Calendar, ChevronDown, Settings2, CheckCircle2, RotateCcw } from 'lucide-react';
+import { KanbanColumn, KanbanCard, Priority, SubTask, KanbanProject, ColumnBehavior } from '@/lib/types/blindados';
+import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 interface KanbanBoardProps {
   columns: KanbanColumn[];
   onColumnsChange: (columns: KanbanColumn[]) => void;
-  onUpdateColumn: (columnId: string, updates: { title?: string }) => void;
-  onAddColumn: (title: string) => void;
+  onUpdateColumn: (columnId: string, updates: { title?: string; behavior?: ColumnBehavior }) => void;
+  onAddColumn: (title: string, behavior?: ColumnBehavior) => void;
   onDeleteColumn: (columnId: string) => void;
   onAddCard: (columnId: string, card: Omit<KanbanCard, 'id' | 'createdAt' | 'updatedAt'>) => void;
   onUpdateCard: (columnId: string, cardId: string, updates: Partial<KanbanCard>) => void;
@@ -45,7 +47,20 @@ interface KanbanBoardProps {
   onMoveCard: (cardId: string, sourceColumnId: string, targetColumnId: string, targetIndex: number) => void;
   onUpdateCardPositions: (columnId: string, cards: KanbanCard[]) => void;
   isLoaded?: boolean;
+  projects?: KanbanProject[];
+  onAddProject?: (name: string, color: string) => void;
+  onDeleteProject?: (projectId: string) => void;
+  selectedProjectId?: string | null;
+  onSelectProject?: (projectId: string | null) => void;
+  selectedDate?: Date | null;
+  onSelectDate?: (date: Date | null) => void;
 }
+
+const PROJECT_COLORS = [
+  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e',
+  '#14b8a6', '#06b6d4', '#0ea5e9', '#6366f1', '#a855f7',
+  '#ec4899', '#f43f5e',
+];
 
 const priorityColors: Record<Priority, { bg: string; text: string; label: string }> = {
   alta: { bg: 'bg-red-500/20', text: 'text-red-400', label: 'PRIORIDADE ALTA' },
@@ -57,12 +72,14 @@ function ColumnMenu({
   column, 
   onRename, 
   onDelete, 
-  onClose 
+  onClose,
+  onChangeBehavior 
 }: { 
   column: KanbanColumn;
   onRename: () => void;
   onDelete: () => void;
   onClose: () => void;
+  onChangeBehavior: (behavior: ColumnBehavior) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -82,22 +99,53 @@ function ColumnMenu({
       initial={{ opacity: 0, scale: 0.95, y: -5 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, y: -5 }}
-      className="absolute right-0 top-8 z-50 w-48 bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-xl shadow-xl overflow-hidden"
+      className="absolute right-0 top-8 z-50 w-56 bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-xl shadow-xl overflow-hidden"
     >
+      <div className="px-4 py-2 border-b border-white/5">
+        <p className="text-xs text-white/40">Comportamento da coluna</p>
+      </div>
       <button
-        onClick={() => { onRename(); onClose(); }}
-        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-white hover:bg-white/5 transition-colors"
+        onClick={() => { onChangeBehavior('active'); onClose(); }}
+        className={`flex items-center gap-3 w-full px-4 py-2.5 text-sm transition-colors ${
+          column.behavior === 'active' ? 'bg-[#00f6ff]/10 text-[#00f6ff]' : 'text-white hover:bg-white/5'
+        }`}
       >
-        <Pencil className="w-4 h-4 text-[#00f6ff]" />
-        Renomear coluna
+        <RotateCcw className="w-4 h-4" />
+        <div className="text-left">
+          <div>Ativada</div>
+          <div className="text-[10px] text-white/40">Tarefas continuam no dia seguinte</div>
+        </div>
+        {column.behavior === 'active' && <Check className="w-4 h-4 ml-auto" />}
       </button>
       <button
-        onClick={() => { onDelete(); onClose(); }}
-        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+        onClick={() => { onChangeBehavior('completion'); onClose(); }}
+        className={`flex items-center gap-3 w-full px-4 py-2.5 text-sm transition-colors ${
+          column.behavior === 'completion' ? 'bg-green-500/10 text-green-400' : 'text-white hover:bg-white/5'
+        }`}
       >
-        <Trash2 className="w-4 h-4" />
-        Excluir coluna
+        <CheckCircle2 className="w-4 h-4" />
+        <div className="text-left">
+          <div>Conclusão</div>
+          <div className="text-[10px] text-white/40">Tarefas somem no dia seguinte</div>
+        </div>
+        {column.behavior === 'completion' && <Check className="w-4 h-4 ml-auto" />}
       </button>
+      <div className="border-t border-white/5 mt-1">
+        <button
+          onClick={() => { onRename(); onClose(); }}
+          className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-white hover:bg-white/5 transition-colors"
+        >
+          <Pencil className="w-4 h-4 text-[#00f6ff]" />
+          Renomear coluna
+        </button>
+        <button
+          onClick={() => { onDelete(); onClose(); }}
+          className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+        >
+          <Trash2 className="w-4 h-4" />
+          Excluir coluna
+        </button>
+      </div>
     </motion.div>
   );
 }
@@ -133,11 +181,13 @@ function SortableColumn({
   children,
   onOpenMenu,
   isDraggingColumn,
+  filteredCardCount,
 }: {
   column: KanbanColumn;
   children: React.ReactNode;
   onOpenMenu: () => void;
   isDraggingColumn: boolean;
+  filteredCardCount?: number;
 }) {
   const {
     attributes,
@@ -175,9 +225,18 @@ function SortableColumn({
             <GripVertical className="w-4 h-4 text-white/30" />
           </div>
           <h3 className="text-xs font-semibold text-white/60 tracking-wider">{column.title}</h3>
+          {column.behavior === 'completion' ? (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/10 border border-green-500/20" title="Tarefas concluídas não aparecem no dia seguinte">
+              <CheckCircle2 className="w-3 h-3 text-green-400" />
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#00f6ff]/10 border border-[#00f6ff]/20" title="Tarefas continuam no dia seguinte">
+              <RotateCcw className="w-3 h-3 text-[#00f6ff]" />
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1 relative">
-          <span className="text-xs text-white/30">{column.cards.length}</span>
+          <span className="text-xs text-white/30">{filteredCardCount !== undefined ? filteredCardCount : column.cards.length}</span>
           <button
             onClick={(e) => { e.stopPropagation(); onOpenMenu(); }}
             className="p-1 rounded hover:bg-white/10 transition-colors"
@@ -332,8 +391,14 @@ export function KanbanBoard({
   onMoveCard,
   onUpdateCardPositions,
   isLoaded = true,
+  projects = [],
+  onAddProject,
+  onDeleteProject,
+  selectedProjectId = null,
+  onSelectProject,
+  selectedDate = null,
+  onSelectDate,
 }: KanbanBoardProps) {
-  // Check if any column has a temporary ID (not yet persisted)
   const hasTemporaryColumns = columns.some(c => c.id.startsWith('temp-'));
   const canDrag = isLoaded && !hasTemporaryColumns;
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
@@ -346,11 +411,73 @@ export function KanbanBoard({
   const [addingCardToColumn, setAddingCardToColumn] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardPriority, setNewCardPriority] = useState<Priority>('media');
+  const [newCardDueDate, setNewCardDueDate] = useState<string>('');
   const [openMenuColumnId, setOpenMenuColumnId] = useState<string | null>(null);
   const [renamingColumnId, setRenamingColumnId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const lastOverIdRef = useRef<UniqueIdentifier | null>(null);
   const originalCardPositionRef = useRef<{ cardId: string; columnId: string; index: number } | null>(null);
+  
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+  const datePickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (projectDropdownRef.current && !projectDropdownRef.current.contains(event.target as Node)) {
+        setShowProjectDropdown(false);
+      }
+      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
+        setShowDatePicker(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const shouldShowCard = useCallback((card: KanbanCard, columnBehavior: ColumnBehavior) => {
+    if (selectedProjectId && card.projectId !== selectedProjectId) {
+      return false;
+    }
+    
+    if (selectedDate) {
+      const selectedDateStr = format(selectedDate, 'yyyy-MM-dd');
+      
+      if (columnBehavior === 'completion' && card.completedAt) {
+        const completedDate = format(parseISO(card.completedAt), 'yyyy-MM-dd');
+        if (completedDate < selectedDateStr) {
+          return false;
+        }
+      }
+      
+      if (card.dueDate) {
+        return card.dueDate <= selectedDateStr;
+      }
+      
+      return true;
+    }
+    
+    return true;
+  }, [selectedProjectId, selectedDate]);
+
+  const getFilteredCards = useCallback((column: KanbanColumn) => {
+    return column.cards.filter(card => shouldShowCard(card, column.behavior || 'active'));
+  }, [shouldShowCard]);
+
+  const handleAddProject = () => {
+    if (newProjectName.trim() && onAddProject) {
+      onAddProject(newProjectName.trim(), newProjectColor);
+      setNewProjectName('');
+      setNewProjectColor(PROJECT_COLORS[0]);
+      setShowAddProjectModal(false);
+    }
+  };
+
+  const selectedProject = projects.find(p => p.id === selectedProjectId);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -615,21 +742,23 @@ export function KanbanBoard({
     const title = newCardTitle.trim();
     if (!title) return;
     
-    // Capture priority before resetting
     const priority = newCardPriority;
+    const dueDate = newCardDueDate || undefined;
+    const projectId = selectedProjectId || undefined;
     
-    // Immediately clear and close to prevent double-clicks
     setNewCardTitle('');
     setNewCardPriority('media');
+    setNewCardDueDate('');
     setAddingCardToColumn(null);
     
-    // Fire and forget - optimistic update handles UI instantly
     onAddCard(columnId, {
       title,
       description: '',
       priority,
       tags: [],
       subtasks: [],
+      dueDate,
+      projectId,
     });
   };
 
@@ -659,8 +788,214 @@ export function KanbanBoard({
       className="bg-[#0a0f1f] rounded-2xl border border-[#00f6ff]/10 p-6 h-full overflow-hidden"
     >
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-white">Quadro de tarefas</h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-lg font-semibold text-white">Quadro de tarefas</h2>
+          
+          <div className="relative" ref={projectDropdownRef}>
+            <button
+              onClick={() => setShowProjectDropdown(!showProjectDropdown)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-[#00f6ff]/30 transition-colors text-sm"
+            >
+              {selectedProject ? (
+                <>
+                  <div 
+                    className="w-3 h-3 rounded-full" 
+                    style={{ backgroundColor: selectedProject.color }}
+                  />
+                  <span className="text-white">{selectedProject.name}</span>
+                </>
+              ) : (
+                <>
+                  <FolderKanban className="w-4 h-4 text-white/60" />
+                  <span className="text-white/60">Todos</span>
+                </>
+              )}
+              <ChevronDown className="w-4 h-4 text-white/40" />
+            </button>
+            
+            <AnimatePresence>
+              {showProjectDropdown && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  className="absolute top-full left-0 mt-2 w-56 bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-xl shadow-xl z-50 overflow-hidden"
+                >
+                  <button
+                    onClick={() => { onSelectProject?.(null); setShowProjectDropdown(false); }}
+                    className={`flex items-center gap-3 w-full px-4 py-2.5 text-sm transition-colors ${
+                      !selectedProjectId ? 'bg-[#00f6ff]/10 text-[#00f6ff]' : 'text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <FolderKanban className="w-4 h-4" />
+                    <span>Todos os projetos</span>
+                    {!selectedProjectId && <Check className="w-4 h-4 ml-auto" />}
+                  </button>
+                  
+                  {projects.length > 0 && (
+                    <div className="border-t border-white/5">
+                      {projects.map(project => (
+                        <button
+                          key={project.id}
+                          onClick={() => { onSelectProject?.(project.id); setShowProjectDropdown(false); }}
+                          className={`flex items-center gap-3 w-full px-4 py-2.5 text-sm transition-colors ${
+                            selectedProjectId === project.id ? 'bg-[#00f6ff]/10 text-[#00f6ff]' : 'text-white hover:bg-white/5'
+                          }`}
+                        >
+                          <div 
+                            className="w-3 h-3 rounded-full flex-shrink-0" 
+                            style={{ backgroundColor: project.color }}
+                          />
+                          <span className="truncate">{project.name}</span>
+                          {selectedProjectId === project.id && <Check className="w-4 h-4 ml-auto flex-shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  
+                  <div className="border-t border-white/5">
+                    <button
+                      onClick={() => { setShowAddProjectModal(true); setShowProjectDropdown(false); }}
+                      className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-[#00f6ff] hover:bg-white/5 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Novo projeto</span>
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="relative" ref={datePickerRef}>
+            <button
+              onClick={() => setShowDatePicker(!showDatePicker)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors text-sm ${
+                selectedDate 
+                  ? 'bg-[#00f6ff]/10 border-[#00f6ff]/30 text-[#00f6ff]' 
+                  : 'bg-white/5 border-white/10 hover:border-[#00f6ff]/30 text-white/60'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              {selectedDate ? (
+                <span>{format(selectedDate, "dd 'de' MMM", { locale: ptBR })}</span>
+              ) : (
+                <span>Data</span>
+              )}
+            </button>
+            
+            <AnimatePresence>
+              {showDatePicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  className="absolute top-full left-0 mt-2 w-64 bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-xl shadow-xl z-50 p-4"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm text-white/60">Filtrar por data</span>
+                    {selectedDate && (
+                      <button
+                        onClick={() => { onSelectDate?.(null); setShowDatePicker(false); }}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="date"
+                    value={selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        onSelectDate?.(parseISO(e.target.value));
+                      }
+                      setShowDatePicker(false);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:border-[#00f6ff]/50 outline-none"
+                  />
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => { onSelectDate?.(new Date()); setShowDatePicker(false); }}
+                      className="flex-1 px-3 py-1.5 rounded-lg bg-[#00f6ff]/10 border border-[#00f6ff]/30 text-[#00f6ff] text-xs hover:bg-[#00f6ff]/20 transition-colors"
+                    >
+                      Hoje
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
       </div>
+
+      <AnimatePresence>
+        {showAddProjectModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={() => setShowAddProjectModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#0a0f1f] border border-[#00f6ff]/20 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+            >
+              <h3 className="text-lg font-semibold text-white mb-4">Novo Projeto</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-white/60 mb-2">Nome do projeto</label>
+                  <input
+                    type="text"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    placeholder="Ex: Trabalho, Pessoal, Estudos..."
+                    className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white focus:border-[#00f6ff]/50 outline-none"
+                    autoFocus
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-white/60 mb-2">Cor</label>
+                  <div className="flex flex-wrap gap-2">
+                    {PROJECT_COLORS.map(color => (
+                      <button
+                        key={color}
+                        onClick={() => setNewProjectColor(color)}
+                        className={`w-8 h-8 rounded-full transition-all ${
+                          newProjectColor === color ? 'ring-2 ring-offset-2 ring-offset-[#0a0f1f] ring-white scale-110' : ''
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowAddProjectModal(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 text-white/60 hover:bg-white/10 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleAddProject}
+                  disabled={!newProjectName.trim()}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-[#00f6ff] text-black font-medium hover:bg-[#00f6ff]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Criar projeto
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <DndContext
         sensors={sensors}
@@ -677,6 +1012,7 @@ export function KanbanBoard({
                 column={column}
                 onOpenMenu={() => setOpenMenuColumnId(column.id)}
                 isDraggingColumn={activeColumn !== null}
+                filteredCardCount={getFilteredCards(column).length}
               >
                 <div className="relative">
                   <AnimatePresence>
@@ -686,6 +1022,7 @@ export function KanbanBoard({
                         onRename={() => handleRenameColumn(column.id)}
                         onDelete={() => onDeleteColumn(column.id)}
                         onClose={() => setOpenMenuColumnId(null)}
+                        onChangeBehavior={(behavior) => onUpdateColumn(column.id, { behavior })}
                       />
                     )}
                   </AnimatePresence>
@@ -722,7 +1059,7 @@ export function KanbanBoard({
                     strategy={verticalListSortingStrategy}
                   >
                     <AnimatePresence>
-                      {column.cards.map((card) => (
+                      {getFilteredCards(column).map((card) => (
                         <SortableCard
                           key={card.id}
                           card={card}
@@ -762,6 +1099,15 @@ export function KanbanBoard({
                       <option value="media">Média Prioridade</option>
                       <option value="baixa">Baixa Prioridade</option>
                     </select>
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-white/40" />
+                      <input
+                        type="date"
+                        value={newCardDueDate}
+                        onChange={(e) => setNewCardDueDate(e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm"
+                      />
+                    </div>
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleAddCard(column.id)}
