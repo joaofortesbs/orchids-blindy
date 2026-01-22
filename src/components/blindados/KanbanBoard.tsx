@@ -1229,6 +1229,7 @@ function EditCardModal({
   const [priority, setPriority] = useState<Priority>(card.priority);
   const [tags, setTags] = useState<string[]>(card.tags);
   const [subtasks, setSubtasks] = useState<SubTask[]>(card.subtasks);
+  const [dueDate, setDueDate] = useState(card.dueDate || '');
   const [newTag, setNewTag] = useState('');
   const [newSubtask, setNewSubtask] = useState('');
 
@@ -1239,6 +1240,7 @@ function EditCardModal({
       priority,
       tags,
       subtasks,
+      dueDate: dueDate || undefined,
     };
     console.log('[EditCardModal] Saving card:', card.id, 'Updates:', JSON.stringify(updates));
     console.log('[EditCardModal] Tags count:', tags.length, 'Subtasks count:', subtasks.length);
@@ -1306,16 +1308,17 @@ function EditCardModal({
         </div>
 
         <div className="space-y-4">
+          <div>
+            <label className="text-sm text-white/60 mb-1 block">Título</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-white/5 border border-[#00f6ff]/30 focus:border-[#00f6ff]/50 outline-none text-[#00f6ff] text-sm"
+            />
+          </div>
+          
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm text-white/60 mb-1 block">Título</label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-white/5 border border-[#00f6ff]/30 focus:border-[#00f6ff]/50 outline-none text-[#00f6ff] text-sm"
-              />
-            </div>
             <div>
               <label className="text-sm text-white/60 mb-1 block">Prioridade</label>
               <select
@@ -1327,6 +1330,15 @@ function EditCardModal({
                 <option value="media">Média</option>
                 <option value="baixa">Baixa</option>
               </select>
+            </div>
+            <div>
+              <label className="text-sm text-white/60 mb-1 block">Data de Entrega</label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-[#00f6ff]/50 outline-none text-white text-sm"
+              />
             </div>
           </div>
 

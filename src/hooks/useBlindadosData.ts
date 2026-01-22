@@ -130,7 +130,7 @@ export function useBlindadosData() {
 
       const newData: BlindadosData = {
         pomodoro: pomodoroData,
-        kanban: { columns },
+        kanban: { columns, projects: dataRef.current.kanban.projects || [] },
         lastUpdated: new Date().toISOString(),
       };
 
@@ -189,6 +189,7 @@ export function useBlindadosData() {
       id: tempId,
       title: title.toUpperCase(),
       cards: [],
+      behavior: 'active',
     };
     
     pendingOperationsRef.current++;
@@ -197,7 +198,7 @@ export function useBlindadosData() {
     setData(prev => {
       const updated = {
         ...prev,
-        kanban: { columns: [...prev.kanban.columns, optimisticColumn] },
+        kanban: { columns: [...prev.kanban.columns, optimisticColumn], projects: prev.kanban.projects || [] },
         lastUpdated: new Date().toISOString(),
       };
       setCache(updated);
@@ -215,7 +216,8 @@ export function useBlindadosData() {
             kanban: { 
               columns: prev.kanban.columns.map(c => 
                 c.id === tempId ? newColumn : c
-              ) 
+              ),
+              projects: prev.kanban.projects || [],
             },
             lastUpdated: new Date().toISOString(),
           };
@@ -227,7 +229,7 @@ export function useBlindadosData() {
         setData(prev => {
           const updated = {
             ...prev,
-            kanban: { columns: prev.kanban.columns.filter(c => c.id !== tempId) },
+            kanban: { columns: prev.kanban.columns.filter(c => c.id !== tempId), projects: prev.kanban.projects || [] },
             lastUpdated: new Date().toISOString(),
           };
           setCache(updated);
@@ -239,7 +241,7 @@ export function useBlindadosData() {
       setData(prev => {
         const updated = {
           ...prev,
-          kanban: { columns: prev.kanban.columns.filter(c => c.id !== tempId) },
+          kanban: { columns: prev.kanban.columns.filter(c => c.id !== tempId), projects: prev.kanban.projects || [] },
           lastUpdated: new Date().toISOString(),
         };
         setCache(updated);
@@ -262,7 +264,7 @@ export function useBlindadosData() {
     setData(prev => {
       const updated = {
         ...prev,
-        kanban: { columns: prev.kanban.columns.filter(c => c.id !== columnId) },
+        kanban: { columns: prev.kanban.columns.filter(c => c.id !== columnId), projects: prev.kanban.projects || [] },
         lastUpdated: new Date().toISOString(),
       };
       setCache(updated);
@@ -274,7 +276,7 @@ export function useBlindadosData() {
       if (!success) {
         console.error('[useBlindadosData] deleteKanbanColumn: FAILED - restoring column');
         setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
           setCache(updated);
           return updated;
         });
@@ -284,7 +286,7 @@ export function useBlindadosData() {
     } catch (e) {
       console.error('[useBlindadosData] deleteKanbanColumn error:', e);
       setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
@@ -331,6 +333,7 @@ export function useBlindadosData() {
           columns: prev.kanban.columns.map(c =>
             c.id === columnId ? { ...c, cards: [...c.cards, optimisticCard] } : c
           ),
+          projects: prev.kanban.projects || [],
         },
         lastUpdated: now,
       };
@@ -377,6 +380,7 @@ export function useBlindadosData() {
                       )}
                     : c
                 ),
+                projects: prev.kanban.projects || [],
               },
               lastUpdated: new Date().toISOString(),
             };
@@ -415,6 +419,7 @@ export function useBlindadosData() {
               ? { ...c, cards: c.cards.filter(existingCard => existingCard.id !== tempId) }
               : c
           ),
+          projects: prev.kanban.projects || [],
         },
         lastUpdated: new Date().toISOString(),
       };
@@ -460,6 +465,7 @@ export function useBlindadosData() {
                 }
               : c
           ),
+          projects: prev.kanban.projects || [],
         },
         lastUpdated: new Date().toISOString(),
       };
@@ -518,7 +524,7 @@ export function useBlindadosData() {
     if (!success) {
       console.error('[useBlindadosData] updateKanbanCard: FAILED after all retries - restoring previous state. Last error:', lastError);
       setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
@@ -539,6 +545,7 @@ export function useBlindadosData() {
             columns: prev.kanban.columns.map(c =>
               c.id === columnId ? { ...c, cards: c.cards.filter(card => card.id !== cardId) } : c
             ),
+            projects: prev.kanban.projects || [],
           },
           lastUpdated: new Date().toISOString(),
         };
@@ -559,6 +566,7 @@ export function useBlindadosData() {
           columns: prev.kanban.columns.map(c =>
             c.id === columnId ? { ...c, cards: c.cards.filter(card => card.id !== cardId) } : c
           ),
+          projects: prev.kanban.projects || [],
         },
         lastUpdated: new Date().toISOString(),
       };
@@ -571,7 +579,7 @@ export function useBlindadosData() {
       if (!success) {
         console.error('[useBlindadosData] deleteKanbanCard: FAILED - restoring card');
         setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
           setCache(updated);
           return updated;
         });
@@ -581,7 +589,7 @@ export function useBlindadosData() {
     } catch (e) {
       console.error('[useBlindadosData] deleteKanbanCard error:', e);
       setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
@@ -674,6 +682,7 @@ export function useBlindadosData() {
           columns: prev.kanban.columns.map(c =>
             c.id === columnId ? { ...c, title: updates.title?.toUpperCase() ?? c.title } : c
           ),
+          projects: prev.kanban.projects || [],
         },
         lastUpdated: new Date().toISOString(),
       };
@@ -686,7 +695,7 @@ export function useBlindadosData() {
       if (!success) {
         console.error('[useBlindadosData] updateKanbanColumn: FAILED - restoring previous state');
         setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
           setCache(updated);
           return updated;
         });
@@ -696,7 +705,7 @@ export function useBlindadosData() {
     } catch (e) {
       console.error('[useBlindadosData] updateKanbanColumn error:', e);
       setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
@@ -720,7 +729,7 @@ export function useBlindadosData() {
     if (hasTemporaryColumns) {
       console.log('[useBlindadosData] updateKanbanColumns: Has temporary columns, only updating UI');
       setData(prev => {
-        const updated = { ...prev, kanban: { columns }, lastUpdated: new Date().toISOString() };
+        const updated = { ...prev, kanban: { columns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
@@ -733,7 +742,7 @@ export function useBlindadosData() {
     console.log('[useBlindadosData] updateKanbanColumns: Starting - pending ops:', pendingOperationsRef.current);
     
     setData(prev => {
-      const updated = { ...prev, kanban: { columns }, lastUpdated: new Date().toISOString() };
+      const updated = { ...prev, kanban: { columns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
       setCache(updated);
       return updated;
     });
@@ -747,7 +756,7 @@ export function useBlindadosData() {
       if (!success) {
         console.error('[useBlindadosData] updateKanbanColumns: FAILED - restoring previous state');
         setData(prev => {
-          const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+          const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
           setCache(updated);
           return updated;
         });
@@ -757,7 +766,7 @@ export function useBlindadosData() {
     } catch (e) {
       console.error('[useBlindadosData] updateKanbanColumns error:', e);
       setData(prev => {
-        const updated = { ...prev, kanban: { columns: previousColumns }, lastUpdated: new Date().toISOString() };
+        const updated = { ...prev, kanban: { columns: previousColumns, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
         setCache(updated);
         return updated;
       });
@@ -938,7 +947,7 @@ export function useBlindadosData() {
     });
     
     setData(prev => {
-      const updated = { ...prev, pomodoro: { ...prev.pomodoro, settings }, lastUpdated: new Date().toISOString() };
+      const updated = { ...prev, pomodoro: { ...prev.pomodoro, settings }, kanban: { ...prev.kanban, projects: prev.kanban.projects || [] }, lastUpdated: new Date().toISOString() };
       setCache(updated);
       return updated;
     });
@@ -1007,8 +1016,28 @@ export function useBlindadosData() {
       },
       sessions: data.pomodoro?.sessions || [],
     },
-    kanban: { columns: data.kanban?.columns || [] },
+    kanban: { columns: data.kanban?.columns || [], projects: data.kanban?.projects || [] },
   };
+
+  const addProject = useCallback((name: string, color: string) => {
+    const newProject = {
+      id: crypto.randomUUID(),
+      name,
+      color,
+      createdAt: new Date().toISOString(),
+    };
+    
+    setData(prev => ({
+      ...prev,
+      kanban: {
+        ...prev.kanban,
+        projects: [...(prev.kanban.projects || []), newProject],
+      },
+      lastUpdated: new Date().toISOString(),
+    }));
+    
+    console.log('[useBlindadosData] addProject: Created project:', newProject);
+  }, []);
 
   return {
     data: safeData,
@@ -1025,6 +1054,7 @@ export function useBlindadosData() {
     updateCardPositions,
     addPomodoroSession,
     updatePomodoroSettings,
+    addProject,
     forceSync: () => loadData(true),
   };
 }

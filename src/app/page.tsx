@@ -39,6 +39,7 @@ function MainApp() {
     updateCardPositions,
     addPomodoroSession,
     updatePomodoroSettings,
+    addProject,
   } = useBlindadosData();
 
   useAutoFix();
@@ -58,6 +59,8 @@ function MainApp() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrganization, setSelectedOrganization] = useState<Organization | null>(null);
   const [isCreateOrgModalOpen, setIsCreateOrgModalOpen] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const { user, isLoading: authLoading, signOut } = useAuth();
   const supabase = useMemo(() => createClient(), []);
 
@@ -102,7 +105,7 @@ function MainApp() {
           return;
         }
 
-        const orgIds = membershipData.map(m => m.organization_id);
+        const orgIds = membershipData.map((m: { organization_id: string }) => m.organization_id);
         
         const { data: orgsData } = await supabase
           .from('organizations')
@@ -110,7 +113,7 @@ function MainApp() {
           .in('id', orgIds)
           .order('created_at', { ascending: false });
 
-        const orgs: Organization[] = (orgsData || []).map(o => ({
+        const orgs: Organization[] = (orgsData || []).map((o: Record<string, unknown>) => ({
           id: o.id,
           name: o.name,
           slug: o.slug,
@@ -338,6 +341,12 @@ function MainApp() {
                   onMoveCard={moveCard}
                   onUpdateCardPositions={updateCardPositions}
                   isLoaded={isLoaded}
+                  projects={data.kanban.projects || []}
+                  selectedProjectId={selectedProjectId}
+                  onSelectProject={setSelectedProjectId}
+                  onAddProject={addProject}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
                 />
               </div>
             </motion.div>

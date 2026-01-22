@@ -72,6 +72,7 @@ export type ChartPeriod = 'daily' | 'weekly' | 'monthly' | 'yearly';
 export interface BlindadosData {
   kanban: {
     columns: KanbanColumn[];
+    projects: KanbanProject[];
   };
   pomodoro: {
     settings: PomodoroSettings;
@@ -100,6 +101,7 @@ export const DEFAULT_KANBAN_COLUMNS: KanbanColumn[] = [];
 export const DEFAULT_DATA: BlindadosData = {
   kanban: {
     columns: [],
+    projects: [],
   },
   pomodoro: {
     settings: DEFAULT_POMODORO_SETTINGS,
